@@ -71,32 +71,127 @@
       }
     }
 
+    function getSessionTabHostPriority(url = '') {
+      try {
+        const hostname = String(new URL(String(url || '')).hostname || '').trim().toLowerCase();
+        if (/(^|\.)chatgpt\.com$/.test(hostname)) {
+          return 0;
+        }
+        if (hostname === 'chat.openai.com') {
+          return 1;
+        }
+        if (/(^|\.)openai\.com$/.test(hostname)) {
+          return 2;
+        }
+      } catch {
+        return Number.POSITIVE_INFINITY;
+      }
+      return Number.POSITIVE_INFINITY;
+    }
+
+    function getSessionTabActivityPriority(tab = {}) {
+      if (tab?.active && tab?.currentWindow) {
+        return 0;
+      }
+      if (tab?.active) {
+        return 1;
+      }
+      return 2;
+    }
+
+    function pickPreferredSessionTab(tabs = []) {
+      const candidates = (Array.isArray(tabs) ? tabs : [])
+        .filter((tab) => Number.isInteger(tab?.id) && isSupportedChatGptSessionUrl(tab.url));
+      if (!candidates.length) {
+        return null;
+      }
+
+      return candidates.reduce((best, candidate) => {
+        if (!best) {
+          return candidate;
+        }
+
+        const candidateHostPriority = getSessionTabHostPriority(candidate.url);
+        const bestHostPriority = getSessionTabHostPriority(best.url);
+        if (candidateHostPriority !== bestHostPriority) {
+          return candidateHostPriority < bestHostPriority ? candidate : best;
+        }
+
+        const candidateActivityPriority = getSessionTabActivityPriority(candidate);
+        const bestActivityPriority = getSessionTabActivityPriority(best);
+        if (candidateActivityPriority !== bestActivityPriority) {
+          return candidateActivityPriority < bestActivityPriority ? candidate : best;
+        }
+
+        const candidateLastAccessed = Number(candidate?.lastAccessed) || 0;
+        const bestLastAccessed = Number(best?.lastAccessed) || 0;
+        if (candidateLastAccessed !== bestLastAccessed) {
+          return candidateLastAccessed > bestLastAccessed ? candidate : best;
+        }
+
+        return Number(candidate.id) < Number(best.id) ? candidate : best;
+      }, null);
+    }
+
+    async function readSupportedSessionTab(tabId) {
+      const numericTabId = Number(tabId) || 0;
+      if (!numericTabId || !chrome?.tabs?.get) {
+        return null;
+      }
+
+      const tab = await chrome.tabs.get(numericTabId).catch(() => null);
+      return tab?.id && isSupportedChatGptSessionUrl(tab.url)
+        ? tab
+        : null;
+    }
+
+    async function findFallbackSessionTab() {
+      if (!chrome?.tabs?.query) {
+        return null;
+      }
+
+      const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true }).catch(() => []);
+      const activeMatch = pickPreferredSessionTab(activeTabs);
+      const allTabs = await chrome.tabs.query({}).catch(() => []);
+      const globalMatch = pickPreferredSessionTab(allTabs);
+      return pickPreferredSessionTab([activeMatch, globalMatch]);
+    }
+
     async function resolveSessionTabId(state = {}) {
       const registeredTabId = typeof getTabId === 'function'
         ? await getTabId(PLUS_CHECKOUT_SOURCE)
         : null;
       if (registeredTabId && typeof isTabAlive === 'function' && await isTabAlive(PLUS_CHECKOUT_SOURCE)) {
-        return Number(registeredTabId) || 0;
-      }
-
-      const storedTabId = Number(state?.plusCheckoutTabId) || 0;
-      if (storedTabId && chrome?.tabs?.get) {
-        const tab = await chrome.tabs.get(storedTabId).catch(() => null);
-        if (tab?.id) {
-          if (typeof registerTab === 'function') {
-            await registerTab(PLUS_CHECKOUT_SOURCE, tab.id);
-          }
-          return tab.id;
+        const registeredTab = await readSupportedSessionTab(registeredTabId);
+        if (registeredTab?.id) {
+          return registeredTab.id;
         }
       }
 
-      throw new Error('未找到可读取 ChatGPT 会话的 Plus 标签页，请先完成当前 Plus 支付链路。');
+      const storedTabId = Number(state?.plusCheckoutTabId) || 0;
+      const storedTab = await readSupportedSessionTab(storedTabId);
+      if (storedTab?.id) {
+        if (typeof registerTab === 'function') {
+          await registerTab(PLUS_CHECKOUT_SOURCE, storedTab.id);
+        }
+        return storedTab.id;
+      }
+
+      const fallbackTab = await findFallbackSessionTab();
+      if (fallbackTab?.id) {
+        if (typeof registerTab === 'function') {
+          await registerTab(PLUS_CHECKOUT_SOURCE, fallbackTab.id);
+        }
+        return fallbackTab.id;
+      }
+
+      throw new Error('未找到可读取 ChatGPT 会话的标签页，请先打开一个已登录的 ChatGPT / OpenAI 页面，或完成当前 Plus 支付链路。');
     }
 
     async function getResolvedSessionTab(tabId, visibleStep) {
       const tab = await chrome?.tabs?.get?.(tabId).catch(() => null);
       if (!tab?.id) {
-        throw new Error(`步骤 ${visibleStep}：Plus 会话标签页不存在或已关闭，无法继续导入 SUB2API。`);
+        throw new Error(`步骤 ${visibleStep}：ChatGPT 会话标签页不存在或已关闭，无法继续导入 SUB2API。`);
       }
       if (!isSupportedChatGptSessionUrl(tab.url)) {
         throw new Error(`步骤 ${visibleStep}：当前标签页不在 ChatGPT / OpenAI 页面，无法读取当前登录会话。`);
@@ -147,7 +242,7 @@
       const visibleStep = resolveVisibleStep(state);
       const api = getSub2ApiApi();
 
-      await addStepLog(visibleStep, '正在定位当前 Plus 会话页并准备导入 SUB2API...', 'info');
+      await addStepLog(visibleStep, '正在定位当前 ChatGPT 会话页并准备导入 SUB2API...', 'info');
       const tabId = await resolveSessionTabId(state);
       const tab = await getResolvedSessionTab(tabId, visibleStep);
       if (chrome?.tabs?.update) {

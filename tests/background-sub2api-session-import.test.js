@@ -238,7 +238,196 @@ test('session import step reads current ChatGPT session and completes node', asy
   );
 });
 
-test('session import step rejects unsupported non-chatgpt tabs before reading session', async () => {
+test('session import step falls back to an active ChatGPT tab when no checkout tab is tracked', async () => {
+  const moduleApi = loadSub2ApiSessionImportModule();
+  const completed = [];
+  const importedPayloads = [];
+  const queryCalls = [];
+  const registerCalls = [];
+  const sentMessages = [];
+
+  const sessionTab = {
+    id: 77,
+    url: 'https://chatgpt.com/?model=gpt-4o',
+    active: true,
+    currentWindow: true,
+    lastAccessed: 1234,
+  };
+
+  const executor = moduleApi.createSub2ApiSessionImportExecutor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        get: async (tabId) => ({
+          ...sessionTab,
+          id: tabId,
+        }),
+        query: async (queryInfo = {}) => {
+          queryCalls.push(queryInfo);
+          if (queryInfo.active && queryInfo.currentWindow) {
+            return [sessionTab];
+          }
+          return [sessionTab];
+        },
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async (nodeId, payload) => {
+      completed.push({ nodeId, payload });
+    },
+    createSub2ApiApi: () => ({
+      importCurrentChatGptSession: async (state, options) => {
+        importedPayloads.push({ state, options });
+        return {
+          verifiedStatus: 'SUB2API 会话导入完成：新建 1，更新 0，跳过 0，失败 0',
+          sub2apiImportCreated: 1,
+          sub2apiImportUpdated: 0,
+          sub2apiImportSkipped: 0,
+          sub2apiImportFailed: 0,
+        };
+      },
+    }),
+    ensureContentScriptReadyOnTabUntilStopped: async () => {},
+    getTabId: async () => null,
+    isTabAlive: async () => false,
+    normalizeSub2ApiUrl: (value) => value,
+    registerTab: async (source, tabId) => {
+      registerCalls.push({ source, tabId });
+    },
+    sendTabMessageUntilStopped: async (tabId, source, message) => {
+      sentMessages.push({ tabId, source, message });
+      return {
+        session: {
+          accessToken: 'session-access-token',
+          user: {
+            email: 'fallback@example.com',
+          },
+        },
+        accessToken: 'session-access-token',
+      };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+    waitForTabCompleteUntilStopped: async () => {},
+    DEFAULT_SUB2API_GROUP_NAME: 'codex',
+  });
+
+  await executor.executeSub2ApiSessionImport({
+    nodeId: 'sub2api-session-import',
+    visibleStep: 10,
+    sub2apiUrl: 'https://sub.example/admin/accounts',
+    sub2apiEmail: 'admin@example.com',
+    sub2apiPassword: 'secret',
+    sub2apiGroupName: 'codex',
+  });
+
+  assert.deepStrictEqual(queryCalls, [
+    { active: true, currentWindow: true },
+    {},
+  ]);
+  assert.deepStrictEqual(registerCalls, [{
+    source: 'plus-checkout',
+    tabId: 77,
+  }]);
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].tabId, 77);
+  assert.equal(importedPayloads.length, 1);
+  assert.equal(importedPayloads[0].state.session.user.email, 'fallback@example.com');
+  assert.equal(completed.length, 1);
+});
+
+test('session import step ignores unusable tracked tabs and prefers a real ChatGPT tab from open tabs', async () => {
+  const moduleApi = loadSub2ApiSessionImportModule();
+  const registerCalls = [];
+  const sentMessages = [];
+
+  const tabsById = {
+    91: {
+      id: 91,
+      url: 'https://www.paypal.com/checkoutnow',
+      active: false,
+      currentWindow: false,
+      lastAccessed: 10,
+    },
+    101: {
+      id: 101,
+      url: 'https://platform.openai.com/settings/profile',
+      active: true,
+      currentWindow: true,
+      lastAccessed: 50,
+    },
+    203: {
+      id: 203,
+      url: 'https://chatgpt.com/c/abc123',
+      active: false,
+      currentWindow: false,
+      lastAccessed: 40,
+    },
+  };
+
+  const executor = moduleApi.createSub2ApiSessionImportExecutor({
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        get: async (tabId) => tabsById[tabId] || null,
+        query: async (queryInfo = {}) => {
+          if (queryInfo.active && queryInfo.currentWindow) {
+            return [tabsById[101]];
+          }
+          return [tabsById[101], tabsById[203]];
+        },
+        update: async () => {},
+      },
+    },
+    completeNodeFromBackground: async () => {},
+    createSub2ApiApi: () => ({
+      importCurrentChatGptSession: async () => ({
+        verifiedStatus: 'SUB2API 会话导入完成：新建 1，更新 0，跳过 0，失败 0',
+      }),
+    }),
+    ensureContentScriptReadyOnTabUntilStopped: async () => {},
+    getTabId: async () => 91,
+    isTabAlive: async () => true,
+    normalizeSub2ApiUrl: (value) => value,
+    registerTab: async (source, tabId) => {
+      registerCalls.push({ source, tabId });
+    },
+    sendTabMessageUntilStopped: async (tabId, source, message) => {
+      sentMessages.push({ tabId, source, message });
+      return {
+        session: {
+          accessToken: 'session-access-token',
+          user: {
+            email: 'best-match@example.com',
+          },
+        },
+        accessToken: 'session-access-token',
+      };
+    },
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+    waitForTabCompleteUntilStopped: async () => {},
+    DEFAULT_SUB2API_GROUP_NAME: 'codex',
+  });
+
+  await executor.executeSub2ApiSessionImport({
+    nodeId: 'sub2api-session-import',
+    visibleStep: 10,
+    sub2apiUrl: 'https://sub.example/admin/accounts',
+    sub2apiEmail: 'admin@example.com',
+    sub2apiPassword: 'secret',
+    sub2apiGroupName: 'codex',
+  });
+
+  assert.deepStrictEqual(registerCalls, [{
+    source: 'plus-checkout',
+    tabId: 203,
+  }]);
+  assert.equal(sentMessages.length, 1);
+  assert.equal(sentMessages[0].tabId, 203);
+});
+
+test('session import step reports missing readable session tab when tracked tabs are unusable', async () => {
   const moduleApi = loadSub2ApiSessionImportModule();
   let sendCalled = false;
 
@@ -275,7 +464,7 @@ test('session import step rejects unsupported non-chatgpt tabs before reading se
       nodeId: 'sub2api-session-import',
       visibleStep: 10,
     }),
-    /当前标签页不在 ChatGPT \/ OpenAI 页面/
+    /未找到可读取 ChatGPT 会话的标签页/
   );
 
   assert.equal(sendCalled, false);
