@@ -383,6 +383,61 @@ test('tab runtime opens new automation tabs in the locked window', async () => {
   assert.equal(created[0].windowId, 100);
 });
 
+test('tab runtime force-new opens replacement before removing the active stale source tab', async () => {
+  const source = fs.readFileSync('background/tab-runtime.js', 'utf8');
+  const globalScope = {};
+  const api = new Function('self', `${source}; return self.MultiPageBackgroundTabRuntime;`)(globalScope);
+  const events = [];
+  let tabs = [
+    { id: 1, active: true, windowId: 100, url: 'https://chatgpt.com/' },
+  ];
+  const runtime = api.createTabRuntime({
+    LOG_PREFIX: '[test]',
+    addLog: async () => {},
+    chrome: {
+      tabs: {
+        create: async (payload) => {
+          events.push({ type: 'create', payload });
+          const tab = { id: 2, active: true, windowId: payload.windowId, url: payload.url };
+          tabs = tabs.map((item) => ({ ...item, active: false })).concat(tab);
+          return tab;
+        },
+        get: async (tabId) => tabs.find((tab) => tab.id === tabId),
+        query: async () => tabs,
+        remove: async (ids) => {
+          events.push({ type: 'remove', ids });
+          tabs = tabs.filter((tab) => !ids.includes(tab.id));
+        },
+      },
+    },
+    getSourceLabel: (sourceName) => sourceName || 'unknown',
+    getState: async () => ({
+      automationWindowId: 100,
+      sourceLastUrls: { 'signup-page': 'https://chatgpt.com/' },
+      tabRegistry: {},
+    }),
+    matchesSourceUrlFamily: (sourceName, candidateUrl) => (
+      sourceName === 'signup-page'
+      && /chatgpt\.com|auth\.openai\.com/.test(String(candidateUrl || ''))
+    ),
+    setState: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const tabId = await runtime.reuseOrCreateTab('signup-page', 'https://auth.openai.com/authorize', {
+    forceNew: true,
+  });
+
+  assert.equal(tabId, 2);
+  assert.deepEqual(events, [
+    { type: 'create', payload: { url: 'https://auth.openai.com/authorize', active: true, windowId: 100 } },
+    { type: 'remove', ids: [1] },
+  ]);
+  assert.deepEqual(tabs, [
+    { id: 2, active: true, windowId: 100, url: 'https://auth.openai.com/authorize' },
+  ]);
+});
+
 test('tab runtime scopes tab queries to the locked automation window', async () => {
   const source = fs.readFileSync('background/tab-runtime.js', 'utf8');
   const globalScope = {};

@@ -9950,15 +9950,31 @@ function updateSaveButtonState() {
   btnSaveSettings.textContent = settingsSaveInFlight ? '保存中' : '保存';
 }
 
+function isEditableElementInSettingsCard(element) {
+  if (!element || !(element instanceof Element)) {
+    return false;
+  }
+  const tagName = String(element.tagName || '').toLowerCase();
+  const isEditableInput = (
+    tagName === 'textarea'
+    || (tagName === 'input' && !['checkbox', 'radio', 'button', 'submit', 'reset', 'range', 'file', 'color'].includes(String(element.type || '').toLowerCase()))
+    || Boolean(element.isContentEditable)
+  );
+  if (!isEditableInput) {
+    return false;
+  }
+  return !settingsCard || settingsCard.contains(element);
+}
+
 function scheduleSettingsAutoSave() {
   clearTimeout(settingsAutoSaveTimer);
   settingsAutoSaveTimer = setTimeout(() => {
-    saveSettings({ silent: true }).catch(() => { });
-  }, 500);
+    saveSettings({ silent: true, source: 'autosave' }).catch(() => { });
+  }, 1200);
 }
 
 async function saveSettings(options = {}) {
-  const { silent = false, force = false } = options;
+  const { silent = false, force = false, source = '' } = options;
   clearTimeout(settingsAutoSaveTimer);
 
   if (!force && !settingsDirty && !settingsSaveInFlight && silent) {
@@ -9969,6 +9985,14 @@ async function saveSettings(options = {}) {
   const saveRevision = settingsSaveRevision;
   settingsSaveInFlight = true;
   updateSaveButtonState();
+
+  const shouldSkipStateApplyForFocusedEditor = (() => {
+    if (!silent || source !== 'autosave') {
+      return false;
+    }
+    const activeEl = typeof document !== 'undefined' ? document.activeElement : null;
+    return isEditableElementInSettingsCard(activeEl);
+  })();
 
   try {
     const response = await chrome.runtime.sendMessage({
@@ -9982,7 +10006,12 @@ async function saveSettings(options = {}) {
     }
 
     if (response?.state && saveRevision === settingsSaveRevision) {
-      applySettingsState(response.state);
+      if (shouldSkipStateApplyForFocusedEditor) {
+        syncLatestState(response.state);
+        markSettingsDirty(false);
+      } else {
+        applySettingsState(response.state);
+      }
     } else {
       syncLatestState(payload);
       if (saveRevision === settingsSaveRevision) {
@@ -16579,6 +16608,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
 
     case 'DATA_UPDATED': {
       syncLatestState(message.payload);
+      const activeSettingsEditor = typeof document !== 'undefined' ? document.activeElement : null;
+      const shouldDeferDataUpdatedUiApply = settingsSaveInFlight
+        && isEditableElementInSettingsCard(activeSettingsEditor);
+      if (shouldDeferDataUpdatedUiApply) {
+        // Avoid overwriting the focused editor while the current save request
+        // is still in flight; otherwise typing can be interrupted by DATA_UPDATED.
+        if (message.payload.operationDelayEnabled !== undefined && typeof applyOperationDelayState === 'function') {
+          applyOperationDelayState(message.payload);
+        }
+        updateAccountRunHistorySettingsUI();
+        renderContributionMode();
+        void syncPlusManualConfirmationDialog();
+        break;
+      }
       if (message.payload.operationDelayEnabled !== undefined && typeof applyOperationDelayState === 'function') {
         applyOperationDelayState(message.payload);
       }
