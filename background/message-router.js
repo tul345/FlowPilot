@@ -91,7 +91,7 @@
         }
         return capabilityRegistry.validateAutoRunStart({
           activeFlowId: options?.activeFlowId ?? validationState?.activeFlowId,
-          panelMode: options?.panelMode ?? validationState?.panelMode,
+          targetId: options?.targetId ?? validationState?.targetId,
           signupMethod: options?.signupMethod ?? validationState?.signupMethod,
           state: validationState,
         });
@@ -113,7 +113,7 @@
         return capabilityRegistry.validateModeSwitch({
           activeFlowId: options?.activeFlowId ?? validationState?.activeFlowId,
           changedKeys: options?.changedKeys,
-          panelMode: options?.panelMode ?? validationState?.panelMode,
+          targetId: options?.targetId ?? validationState?.targetId,
           signupMethod: options?.signupMethod ?? validationState?.signupMethod,
           state: validationState,
         });
@@ -217,10 +217,6 @@
       return String(targetId || fallbackSourceId).trim().toLowerCase() || fallbackSourceId;
     }
 
-    function mapAutoRunTargetIdToPanelMode(targetId = '', fallback = 'cpa') {
-      return String(targetId || fallback || 'cpa').trim().toLowerCase() || 'cpa';
-    }
-
     function buildAutoRunFlowStateUpdates(payload = {}) {
       const hasActiveFlowId = Object.prototype.hasOwnProperty.call(payload, 'activeFlowId');
       const hasTargetId = Object.prototype.hasOwnProperty.call(payload, 'targetId');
@@ -233,11 +229,11 @@
         flowId: activeFlowId,
       };
       if (hasTargetId) {
-        if (activeFlowId === 'kiro') {
-          updates.kiroTargetId = normalizeMessageTargetId('kiro', payload.targetId, 'kiro-rs');
-        } else {
-          updates.panelMode = mapAutoRunTargetIdToPanelMode(payload.targetId, 'cpa');
-        }
+        updates.targetId = normalizeMessageTargetId(
+          activeFlowId,
+          payload.targetId,
+          activeFlowId === 'kiro' ? 'kiro-rs' : 'cpa'
+        );
       }
       return updates;
     }
@@ -297,10 +293,10 @@
       }
 
       const signupTabId = typeof getTabId === 'function'
-        ? await getTabId('signup-page')
+        ? await getTabId('openai-auth')
         : null;
       const signupTabAlive = signupTabId && typeof isTabAlive === 'function'
-        ? await isTabAlive('signup-page')
+        ? await isTabAlive('openai-auth')
         : Boolean(signupTabId);
 
       if (!signupTabId || !signupTabAlive) {
@@ -1309,7 +1305,7 @@
           const state = await getState();
           const autoRunStartValidation = validateAutoRunStart(state, {
             activeFlowId: autoRunFlowStateUpdates.activeFlowId ?? state?.activeFlowId,
-            panelMode: autoRunFlowStateUpdates.panelMode ?? state?.panelMode,
+            targetId: autoRunFlowStateUpdates.targetId ?? state?.targetId,
             state,
           });
           if (autoRunStartValidation?.ok === false) {
@@ -1352,7 +1348,7 @@
           const state = await getState();
           const autoRunStartValidation = validateAutoRunStart(state, {
             activeFlowId: autoRunFlowStateUpdates.activeFlowId ?? state?.activeFlowId,
-            panelMode: autoRunFlowStateUpdates.panelMode ?? state?.panelMode,
+            targetId: autoRunFlowStateUpdates.targetId ?? state?.targetId,
             state,
           });
           if (autoRunStartValidation?.ok === false) {
@@ -1451,7 +1447,7 @@
             Object.prototype.hasOwnProperty.call(updates, 'phoneVerificationEnabled')
             || Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
             || Object.prototype.hasOwnProperty.call(updates, 'signupMethod')
-            || Object.prototype.hasOwnProperty.call(updates, 'panelMode')
+            || Object.prototype.hasOwnProperty.call(updates, 'targetId')
             || Object.prototype.hasOwnProperty.call(updates, 'activeFlowId')
             || Object.prototype.hasOwnProperty.call(updates, 'accountContributionEnabled')
           ) {
@@ -1600,10 +1596,8 @@
             );
             const selectedPlusAccountAccessStrategy = getPlusAccountAccessStrategyLabel(
               stateUpdates.plusAccountAccessStrategy ?? currentState?.plusAccountAccessStrategy ?? 'oauth',
-              stateUpdates.panelMode
-                ?? currentState?.panelMode
-                ?? stateUpdates.openaiIntegrationTargetId
-                ?? currentState?.openaiIntegrationTargetId
+              stateUpdates.targetId
+                ?? currentState?.targetId
                 ?? 'cpa'
             );
             await addLog(
@@ -1620,10 +1614,8 @@
           } else if (plusAccountAccessStrategyChanged && nextPlusModeEnabled) {
             const selectedPlusAccountAccessStrategy = getPlusAccountAccessStrategyLabel(
               stateUpdates.plusAccountAccessStrategy ?? currentState?.plusAccountAccessStrategy ?? 'oauth',
-              stateUpdates.panelMode
-                ?? currentState?.panelMode
-                ?? stateUpdates.openaiIntegrationTargetId
-                ?? currentState?.openaiIntegrationTargetId
+              stateUpdates.targetId
+                ?? currentState?.targetId
                 ?? 'cpa'
             );
             await addLog(`Plus 账号接入策略已切换为 ${selectedPlusAccountAccessStrategy}，已更新对应的 Plus 尾链。`, 'info');
@@ -1661,7 +1653,7 @@
           );
           const targetId = normalizeMessageTargetId(
             activeFlowId,
-            message.payload?.targetId || currentState?.kiroTargetId || 'kiro-rs',
+            message.payload?.targetId || currentState?.targetId || 'kiro-rs',
             'kiro-rs'
           );
           const nestedTargetConfig = currentState?.settingsState?.flows?.kiro?.targets?.[targetId]

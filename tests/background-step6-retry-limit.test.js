@@ -3,7 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 
 test('step 6 waits for registration success and completes from background', async () => {
-  const source = fs.readFileSync('background/steps/wait-registration-success.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/wait-registration-success.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep6;`)(globalScope);
 
@@ -33,7 +33,7 @@ test('step 6 waits for registration success and completes from background', asyn
 });
 
 test('step 6 only clears cookies when cleanup switch is enabled', async () => {
-  const source = fs.readFileSync('background/steps/wait-registration-success.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/wait-registration-success.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep6;`)(globalScope);
 
@@ -90,7 +90,7 @@ test('step 6 only clears cookies when cleanup switch is enabled', async () => {
 });
 
 test('step 7 retries up to configured limit and then fails', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -138,7 +138,7 @@ test('step 7 retries up to configured limit and then fails', async () => {
 });
 
 test('step 7 hands add-phone to the dedicated post-login phone node without internal retry', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -196,7 +196,7 @@ test('step 7 hands add-phone to the dedicated post-login phone node without inte
 });
 
 test('step 7 no longer runs shared phone verification inside oauth-login', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -218,7 +218,7 @@ test('step 7 no longer runs shared phone verification inside oauth-login', async
       password: 'secret',
       phoneVerificationEnabled: true,
     }),
-    getTabId: async (sourceName) => (sourceName === 'signup-page' ? 91 : 0),
+    getTabId: async (sourceName) => (sourceName === 'openai-auth' ? 91 : 0),
     isStep6RecoverableResult: (result) => result?.step6Outcome === 'recoverable',
     isStep6SuccessResult: (result) => result?.step6Outcome === 'success',
     phoneVerificationHelpers: {
@@ -261,7 +261,7 @@ test('step 7 no longer runs shared phone verification inside oauth-login', async
 });
 
 test('step 7 add-phone handoff does not depend on phone verification being enabled', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -302,7 +302,7 @@ test('step 7 add-phone handoff does not depend on phone verification being enabl
 });
 
 test('step 7 ignores obsolete shared add-phone verifier during handoff', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -343,7 +343,7 @@ test('step 7 ignores obsolete shared add-phone verifier during handoff', async (
 });
 
 test('step 7 starts a new oauth timeout window for each refreshed oauth url', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -396,7 +396,7 @@ test('step 7 starts a new oauth timeout window for each refreshed oauth url', as
 });
 
 test('step 7 forwards direct OAuth consent skip metadata when completing', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -445,7 +445,7 @@ test('step 7 forwards direct OAuth consent skip metadata when completing', async
 });
 
 test('step 7 forwards phone login identity payload when account identifier is phone', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -535,7 +535,7 @@ test('step 7 forwards phone login identity payload when account identifier is ph
 });
 
 test('step 7 keeps Plus email login even when phone sms runtime exists', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -589,7 +589,7 @@ test('step 7 keeps Plus email login even when phone sms runtime exists', async (
 });
 
 test('step 7 keeps relogin-bound-email as the active node id', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -655,7 +655,7 @@ test('step 7 keeps relogin-bound-email as the active node id', async () => {
 });
 
 test('step 7 keeps phone login after step 8 stores an unbound email for phone signup', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -711,7 +711,7 @@ test('step 7 keeps phone login after step 8 stores an unbound email for phone si
 });
 
 test('step 7 can infer phone login from an available phone signup configuration before step 2 finishes', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -757,7 +757,7 @@ test('step 7 can infer phone login from an available phone signup configuration 
 });
 
 test('step 7 can start from a manually filled signup phone without completed step 2 or step 3 state', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -822,7 +822,7 @@ test('step 7 can start from a manually filled signup phone without completed ste
 });
 
 test('step 7 stops immediately when management secret is missing', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 
@@ -867,7 +867,7 @@ test('step 7 stops immediately when management secret is missing', async () => {
 });
 
 test('step 7 stops immediately when management secret is invalid', async () => {
-  const source = fs.readFileSync('background/steps/oauth-login.js', 'utf8');
+  const source = fs.readFileSync('flows/openai/background/steps/oauth-login.js', 'utf8');
   const globalScope = {};
   const api = new Function('self', `${source}; return self.MultiPageBackgroundStep7;`)(globalScope);
 

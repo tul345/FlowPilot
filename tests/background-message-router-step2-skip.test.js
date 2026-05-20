@@ -426,7 +426,7 @@ test('message router finalizes step 3 before marking it completed', async () => 
   const response = await router.handleMessage({
     type: 'NODE_COMPLETE',
     nodeId: 'fill-password',
-    source: 'signup-page',
+    source: 'openai-auth',
     payload: {
       nodeId: 'fill-password',
       email: 'user@example.com',
@@ -548,7 +548,7 @@ test('message router marks step 3 failed when post-submit finalize fails', async
   const response = await router.handleMessage({
     type: 'NODE_COMPLETE',
     nodeId: 'fill-password',
-    source: 'signup-page',
+    source: 'openai-auth',
     payload: {
       nodeId: 'fill-password',
       email: 'user@example.com',
@@ -581,7 +581,7 @@ test('message router does not duplicate step 3 mismatch failure log after finali
   const response = await router.handleMessage({
     type: 'NODE_ERROR',
     nodeId: 'fill-password',
-    source: 'signup-page',
+    source: 'openai-auth',
     payload: { nodeId: 'fill-password' },
     error: mismatchError,
   }, {});
@@ -604,7 +604,7 @@ test('message router stops the flow and surfaces cloudflare security block error
   const response = await router.handleMessage({
     type: 'NODE_ERROR',
     nodeId: 'oauth-login',
-    source: 'signup-page',
+    source: 'openai-auth',
     payload: { nodeId: 'oauth-login' },
     error: 'CF_SECURITY_BLOCKED::您已触发Cloudflare 安全防护系统',
   }, {});

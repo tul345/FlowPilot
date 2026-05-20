@@ -2002,13 +2002,44 @@ async function openConfirmModalWithOption({
 async function openPlusManualConfirmationDialog(options = {}) {
   const method = String(options.method || '').trim().toLowerCase();
   const activeFlowId = String(latestState?.activeFlowId || latestState?.flowId || 'openai').trim().toLowerCase();
-  const panelMode = String(latestState?.panelMode || latestState?.openaiIntegrationTargetId || '').trim().toLowerCase();
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || 'openai';
+      if (normalizedFlowId === 'openai') {
+        const normalizedTargetId = String(targetId || fallback || '').trim().toLowerCase();
+        return normalizedTargetId === 'sub2api' || normalizedTargetId === 'codex2api' ? normalizedTargetId : 'cpa';
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const getDefaultTargetIdForFlowSafe = typeof getDefaultTargetIdForFlow === 'function'
+    ? getDefaultTargetIdForFlow
+    : ((flowId = 'openai') => (String(flowId || '').trim().toLowerCase() === 'openai' ? 'cpa' : 'kiro-rs'));
+  const normalizePlusStrategyTargetIdSafe = typeof normalizePlusStrategyTargetId === 'function'
+    ? normalizePlusStrategyTargetId
+    : ((value = '') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'sub2api' || normalized === 'codex2api') {
+        return normalized;
+      }
+      return 'cpa';
+    });
+  const targetId = normalizePlusStrategyTargetIdSafe(
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(latestState, activeFlowId)
+      : normalizeTargetIdForFlowSafe(
+        activeFlowId,
+        latestState?.targetId || '',
+        getDefaultTargetIdForFlowSafe(activeFlowId)
+      )
+  );
   const signupMethod = String(latestState?.resolvedSignupMethod || latestState?.signupMethod || 'email').trim().toLowerCase();
   const plusModeEnabled = latestState?.plusModeEnabled === undefined ? true : Boolean(latestState.plusModeEnabled);
   const plusAccountAccessStrategy = String(latestState?.plusAccountAccessStrategy || 'oauth').trim().toLowerCase();
   const useSub2ApiSessionImport = plusModeEnabled
     && activeFlowId === 'openai'
-    && panelMode === 'sub2api'
+    && targetId === 'sub2api'
     && signupMethod === 'email'
     && plusAccountAccessStrategy === 'sub2api_codex_session';
   const continuationActionLabel = useSub2ApiSessionImport
@@ -2042,13 +2073,44 @@ async function syncPlusManualConfirmationDialog() {
   const step = Number(latestState?.plusManualConfirmationStep) || 0;
   const method = String(latestState?.plusManualConfirmationMethod || '').trim().toLowerCase();
   const activeFlowId = String(latestState?.activeFlowId || latestState?.flowId || 'openai').trim().toLowerCase();
-  const panelMode = String(latestState?.panelMode || latestState?.openaiIntegrationTargetId || '').trim().toLowerCase();
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || 'openai';
+      if (normalizedFlowId === 'openai') {
+        const normalizedTargetId = String(targetId || fallback || '').trim().toLowerCase();
+        return normalizedTargetId === 'sub2api' || normalizedTargetId === 'codex2api' ? normalizedTargetId : 'cpa';
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const getDefaultTargetIdForFlowSafe = typeof getDefaultTargetIdForFlow === 'function'
+    ? getDefaultTargetIdForFlow
+    : ((flowId = 'openai') => (String(flowId || '').trim().toLowerCase() === 'openai' ? 'cpa' : 'kiro-rs'));
+  const normalizePlusStrategyTargetIdSafe = typeof normalizePlusStrategyTargetId === 'function'
+    ? normalizePlusStrategyTargetId
+    : ((value = '') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'sub2api' || normalized === 'codex2api') {
+        return normalized;
+      }
+      return 'cpa';
+    });
+  const targetId = normalizePlusStrategyTargetIdSafe(
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(latestState, activeFlowId)
+      : normalizeTargetIdForFlowSafe(
+        activeFlowId,
+        latestState?.targetId || '',
+        getDefaultTargetIdForFlowSafe(activeFlowId)
+      )
+  );
   const signupMethod = String(latestState?.resolvedSignupMethod || latestState?.signupMethod || 'email').trim().toLowerCase();
   const plusModeEnabled = latestState?.plusModeEnabled === undefined ? true : Boolean(latestState.plusModeEnabled);
   const plusAccountAccessStrategy = String(latestState?.plusAccountAccessStrategy || 'oauth').trim().toLowerCase();
   const useSub2ApiSessionImport = plusModeEnabled
     && activeFlowId === 'openai'
-    && panelMode === 'sub2api'
+    && targetId === 'sub2api'
     && signupMethod === 'email'
     && plusAccountAccessStrategy === 'sub2api_codex_session';
   const continuationActionLabel = useSub2ApiSessionImport
@@ -2159,10 +2221,10 @@ function getContributionContentFlowId(state = latestState) {
 
 function getContributionContentTargetId(state = latestState) {
   const flowId = getContributionContentFlowId(state);
-  if (flowId === 'kiro') {
-    return String(state?.kiroTargetId || state?.targetId || 'kiro-rs').trim().toLowerCase() || 'kiro-rs';
+  if (typeof getSelectedTargetIdForState === 'function') {
+    return getSelectedTargetIdForState(state, flowId);
   }
-  return String(state?.openaiIntegrationTargetId || state?.panelMode || state?.targetId || 'cpa').trim().toLowerCase() || 'cpa';
+  return normalizeTargetIdForFlow(flowId, state?.targetId || '', getDefaultTargetIdForFlow(flowId));
 }
 
 function openNewUserGuidePrompt() {
@@ -2255,29 +2317,54 @@ function shouldWarnAutoRunFallbackRisk(totalRuns, autoRunSkipFailures) {
   return totalRuns >= AUTO_RUN_FALLBACK_RISK_WARNING_MIN_RUNS;
 }
 
-function shouldWarnCpaPhoneSignup(signupMethod = null, panelMode = null) {
+function shouldWarnCpaPhoneSignup(signupMethod = null, targetId = null) {
+  const defaultFlowId = typeof DEFAULT_ACTIVE_FLOW_ID === 'string' ? DEFAULT_ACTIVE_FLOW_ID : 'openai';
   const resolvedSignupMethod = normalizeSignupMethod(
     signupMethod ?? (
       typeof getSelectedSignupMethod === 'function'
         ? getSelectedSignupMethod()
         : DEFAULT_SIGNUP_METHOD
-    )
+      )
   );
-  const resolvedPanelMode = normalizePanelMode(
-    panelMode ?? (
-      typeof getSelectedPanelMode === 'function'
-        ? getSelectedPanelMode()
-        : 'cpa'
-    )
+  const activeFlowId = typeof getSelectedFlowId === 'function'
+    ? getSelectedFlowId(latestState)
+    : (
+      typeof normalizeFlowId === 'function'
+        ? normalizeFlowId(latestState?.activeFlowId || latestState?.flowId || defaultFlowId)
+        : (String(latestState?.activeFlowId || latestState?.flowId || defaultFlowId).trim().toLowerCase() || defaultFlowId)
+    );
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, value = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || defaultFlowId;
+      if (normalizedFlowId === defaultFlowId) {
+        return normalizePanelMode(value || fallback);
+      }
+      const normalizedValue = String(value || '').trim().toLowerCase();
+      return normalizedValue || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const resolvedTargetId = normalizeTargetIdForFlowSafe(
+    activeFlowId,
+    targetId ?? (
+      typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(activeFlowId)
+        : getSelectedTargetIdForState(latestState, activeFlowId)
+    ),
+    typeof getDefaultTargetIdForFlow === 'function'
+      ? getDefaultTargetIdForFlow(activeFlowId)
+      : (activeFlowId === defaultFlowId ? 'cpa' : 'kiro-rs')
   );
 
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
-      panelMode: resolvedPanelMode,
+      activeFlowId,
+      targetId: resolvedTargetId,
       signupMethod: resolvedSignupMethod,
       state: {
         ...(typeof latestState !== 'undefined' ? latestState : {}),
-        panelMode: resolvedPanelMode,
+        activeFlowId,
+        flowId: activeFlowId,
+        targetId: resolvedTargetId,
         signupMethod: resolvedSignupMethod,
       },
     })
@@ -2288,12 +2375,14 @@ function shouldWarnCpaPhoneSignup(signupMethod = null, panelMode = null) {
       }) || null;
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
-          activeFlowId: typeof latestState !== 'undefined' ? latestState?.activeFlowId : '',
-          panelMode: resolvedPanelMode,
+          activeFlowId,
+          targetId: resolvedTargetId,
           signupMethod: resolvedSignupMethod,
           state: {
             ...(typeof latestState !== 'undefined' ? latestState : {}),
-            panelMode: resolvedPanelMode,
+            activeFlowId,
+            flowId: activeFlowId,
+            targetId: resolvedTargetId,
             signupMethod: resolvedSignupMethod,
           },
         })
@@ -2305,7 +2394,7 @@ function shouldWarnCpaPhoneSignup(signupMethod = null, panelMode = null) {
   }
 
   return resolvedSignupMethod === SIGNUP_METHOD_PHONE
-    && resolvedPanelMode === 'cpa'
+    && resolvedTargetId === 'cpa'
     && !isCpaPhoneSignupPromptDismissed();
 }
 
@@ -2327,11 +2416,11 @@ async function confirmCpaPhoneSignupIfNeeded(options = {}) {
   const signupMethod = Object.prototype.hasOwnProperty.call(options, 'signupMethod')
     ? options.signupMethod
     : null;
-  const panelMode = Object.prototype.hasOwnProperty.call(options, 'panelMode')
-    ? options.panelMode
+  const targetId = Object.prototype.hasOwnProperty.call(options, 'targetId')
+    ? options.targetId
     : null;
 
-  if (!shouldWarnCpaPhoneSignup(signupMethod, panelMode)) {
+  if (!shouldWarnCpaPhoneSignup(signupMethod, targetId)) {
     return true;
   }
 
@@ -2557,6 +2646,18 @@ function getKiroUploadStatusLabel(value = '') {
     default:
       return rawValue;
   }
+}
+
+function getKiroRuntimeState(state = {}) {
+  const runtimeState = state?.runtimeState?.flowState?.kiro;
+  if (runtimeState && typeof runtimeState === 'object' && !Array.isArray(runtimeState)) {
+    return runtimeState;
+  }
+  const flowState = state?.flowState?.kiro;
+  if (flowState && typeof flowState === 'object' && !Array.isArray(flowState)) {
+    return flowState;
+  }
+  return {};
 }
 
 function setKiroRsConnectionTestStatus(message = '') {
@@ -2873,6 +2974,18 @@ function syncLatestState(nextState) {
     nodeStatuses: mergedNodeStatuses,
   };
 
+  const activeFlowId = typeof normalizeFlowId === 'function'
+    ? normalizeFlowId(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID, DEFAULT_ACTIVE_FLOW_ID)
+    : (String(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID);
+  const schema = typeof getSettingsSchema === 'function' ? getSettingsSchema() : null;
+  const selectedTargetId = schema?.getSelectedTargetId
+    ? schema.getSelectedTargetId(latestState, activeFlowId)
+    : (String(latestState?.targetId || '').trim().toLowerCase()
+      || (activeFlowId === 'kiro' ? 'kiro-rs' : 'cpa'));
+  latestState.targetId = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow(activeFlowId, selectedTargetId)
+    : selectedTargetId;
+
   renderAccountRecords(latestState);
 }
 
@@ -3053,7 +3166,12 @@ function getRequestedPlusAccountAccessStrategy(state = latestState) {
     if (typeof selectPanelMode !== 'undefined' && selectPanelMode?.value) {
       return selectPanelMode.value;
     }
-    return state?.panelMode || state?.openaiIntegrationTargetId || 'cpa';
+    return getSelectedTargetIdForState({
+      ...(latestState || {}),
+      ...(state || {}),
+      activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+      flowId: DEFAULT_ACTIVE_FLOW_ID,
+    }, DEFAULT_ACTIVE_FLOW_ID);
   };
   const resolveStrategyForTarget = typeof resolvePlusAccountAccessStrategyForTarget === 'function'
     ? resolvePlusAccountAccessStrategyForTarget
@@ -3136,7 +3254,38 @@ function resolvePlusManualContinuationActionLabelFromState(state = latestState) 
   const activeFlowId = String(state?.activeFlowId || state?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase();
   const signupMethod = normalizeSignupMethod(state?.resolvedSignupMethod || state?.signupMethod || DEFAULT_SIGNUP_METHOD);
   const plusModeEnabled = state?.plusModeEnabled === undefined ? true : Boolean(state?.plusModeEnabled);
-  const targetId = normalizePlusStrategyTargetId(state?.panelMode || state?.openaiIntegrationTargetId || 'cpa');
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
+      if (normalizedFlowId === DEFAULT_ACTIVE_FLOW_ID) {
+        const normalizedTargetId = String(targetId || fallback || '').trim().toLowerCase();
+        return normalizedTargetId === 'sub2api' || normalizedTargetId === 'codex2api' ? normalizedTargetId : 'cpa';
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const getDefaultTargetIdForFlowSafe = typeof getDefaultTargetIdForFlow === 'function'
+    ? getDefaultTargetIdForFlow
+    : ((flowId = DEFAULT_ACTIVE_FLOW_ID) => (String(flowId || '').trim().toLowerCase() === DEFAULT_ACTIVE_FLOW_ID ? 'cpa' : 'kiro-rs'));
+  const normalizePlusStrategyTargetIdSafe = typeof normalizePlusStrategyTargetId === 'function'
+    ? normalizePlusStrategyTargetId
+    : ((value = '') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'sub2api' || normalized === 'codex2api') {
+        return normalized;
+      }
+      return 'cpa';
+    });
+  const targetId = normalizePlusStrategyTargetIdSafe(
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(state, activeFlowId)
+      : normalizeTargetIdForFlowSafe(
+        activeFlowId,
+        state?.targetId || '',
+        getDefaultTargetIdForFlowSafe(activeFlowId)
+      )
+  );
   const strategy = normalizePlusAccountAccessStrategy(state?.plusAccountAccessStrategy || DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY);
   const effectiveStrategy = plusModeEnabled && activeFlowId === DEFAULT_ACTIVE_FLOW_ID && signupMethod === SIGNUP_METHOD_EMAIL
     ? strategy
@@ -4478,12 +4627,63 @@ function collectSettingsPayload() {
       const normalized = String(value || '').trim().toLowerCase();
       return normalized === 'sub2api' || normalized === 'codex2api' ? normalized : 'cpa';
     });
-  const rawPanelMode = normalizePanelModeSafe(selectPanelMode?.value || latestState?.panelMode || 'cpa');
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || defaultFlowId;
+      if (normalizedFlowId === defaultFlowId) {
+        return normalizePanelModeSafe(targetId || fallback);
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const resolvePlusAccountAccessStrategyForTargetSafe = typeof resolvePlusAccountAccessStrategyForTarget === 'function'
+    ? resolvePlusAccountAccessStrategyForTarget
+    : ((value = '', targetId = '') => {
+      const oauthStrategyValue = typeof PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH !== 'undefined'
+        ? PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH
+        : 'oauth';
+      const sub2apiSessionStrategyValue = typeof PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION !== 'undefined'
+        ? PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION
+        : 'sub2api_codex_session';
+      const cpaSessionStrategyValue = typeof PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION !== 'undefined'
+        ? PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION
+        : 'cpa_codex_session';
+      const sessionUiValue = typeof PLUS_ACCOUNT_ACCESS_STRATEGY_CODEX_SESSION_UI !== 'undefined'
+        ? PLUS_ACCOUNT_ACCESS_STRATEGY_CODEX_SESSION_UI
+        : 'codex_session';
+      const normalizedValue = String(value || '').trim().toLowerCase();
+      const isSessionImport = normalizedValue === sessionUiValue
+        || normalizedValue === sub2apiSessionStrategyValue
+        || normalizedValue === cpaSessionStrategyValue;
+      if (!isSessionImport) {
+        return oauthStrategyValue;
+      }
+      const normalizedTargetId = typeof normalizePlusStrategyTargetId === 'function'
+        ? normalizePlusStrategyTargetId(targetId)
+        : normalizePanelModeSafe(targetId || '');
+      if (normalizedTargetId === 'sub2api') {
+        return sub2apiSessionStrategyValue;
+      }
+      if (normalizedTargetId === 'cpa') {
+        return cpaSessionStrategyValue;
+      }
+      return oauthStrategyValue;
+    });
   const selectedTargetId = typeof getSelectedTargetId === 'function'
     ? getSelectedTargetId(activeFlowId)
-    : (activeFlowId === defaultFlowId
-      ? rawPanelMode
-      : String(selectPanelMode?.value || latestState?.kiroTargetId || 'kiro-rs').trim().toLowerCase() || 'kiro-rs');
+    : normalizeTargetIdForFlowSafe(
+      activeFlowId,
+      selectPanelMode?.value || latestState?.targetId || '',
+      typeof getDefaultTargetIdForFlow === 'function'
+        ? getDefaultTargetIdForFlow(activeFlowId)
+        : (activeFlowId === defaultFlowId ? 'cpa' : 'kiro-rs')
+    );
+  const openAiTargetId = normalizePanelModeSafe(
+    activeFlowId === defaultFlowId
+      ? selectedTargetId
+      : getSelectedPanelMode(latestState)
+  );
   const rawPlusModeEnabled = typeof inputPlusModeEnabled !== 'undefined' && inputPlusModeEnabled
     ? Boolean(inputPlusModeEnabled.checked)
     : Boolean(latestState?.plusModeEnabled);
@@ -4495,14 +4695,12 @@ function collectSettingsPayload() {
     ? resolveCurrentSidepanelCapabilities({
       activeFlowId,
       targetId: selectedTargetId,
-      panelMode: rawPanelMode,
       signupMethod: selectedSignupMethod,
       state: {
         ...(latestState || {}),
         activeFlowId,
-        ...(activeFlowId === defaultFlowId
-          ? { panelMode: rawPanelMode }
-          : { kiroTargetId: selectedTargetId }),
+        flowId: activeFlowId,
+        targetId: selectedTargetId,
         plusModeEnabled: rawPlusModeEnabled,
         plusAccountAccessStrategy: requestedPlusAccountAccessStrategy,
         phoneVerificationEnabled: rawPhoneVerificationEnabled,
@@ -4517,15 +4715,13 @@ function collectSettingsPayload() {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId,
-          panelMode: rawPanelMode,
           targetId: selectedTargetId,
           signupMethod: selectedSignupMethod,
           state: {
             ...(latestState || {}),
             activeFlowId,
-            ...(activeFlowId === defaultFlowId
-              ? { panelMode: rawPanelMode }
-              : { kiroTargetId: selectedTargetId }),
+            flowId: activeFlowId,
+            targetId: selectedTargetId,
             plusModeEnabled: rawPlusModeEnabled,
             plusAccountAccessStrategy: requestedPlusAccountAccessStrategy,
             phoneVerificationEnabled: rawPhoneVerificationEnabled,
@@ -4534,8 +4730,12 @@ function collectSettingsPayload() {
         })
         : null;
     })();
-  const effectivePanelMode = capabilityState?.effectivePanelMode || capabilityState?.panelMode || rawPanelMode;
   const effectiveTargetId = capabilityState?.effectiveTargetId || selectedTargetId;
+  const effectiveOpenAiTargetId = normalizePanelModeSafe(
+    activeFlowId === defaultFlowId
+      ? effectiveTargetId
+      : openAiTargetId
+  );
   const effectivePlusModeEnabled = capabilityState
     ? Boolean(capabilityState.runtimeLocks?.plusModeEnabled)
     : rawPlusModeEnabled;
@@ -4623,16 +4823,7 @@ function collectSettingsPayload() {
     });
   return {
     activeFlowId,
-    ...(accountContributionEnabled ? {} : {
-      ...(activeFlowId === defaultFlowId ? { panelMode: effectivePanelMode } : {}),
-    }),
-    kiroTargetId: normalizeKiroTargetIdSafe(
-      'kiro',
-      activeFlowId === 'kiro'
-        ? effectiveTargetId
-        : (latestState?.kiroTargetId || 'kiro-rs'),
-      'kiro-rs'
-    ),
+    targetId: effectiveTargetId,
     kiroRsUrl: currentKiroRsUrlValue !== null
       ? (currentKiroRsUrlValue || defaultKiroRsUrl)
       : (String(latestState?.kiroRsUrl || defaultKiroRsUrl).trim() || defaultKiroRsUrl),
@@ -4677,7 +4868,9 @@ function collectSettingsPayload() {
     codex2apiAdminKey: inputCodex2ApiAdminKey.value.trim(),
     plusModeEnabled: effectivePlusModeEnabled,
     plusPaymentMethod,
-    plusAccountAccessStrategy: requestedPlusAccountAccessStrategy,
+    plusAccountAccessStrategy: activeFlowId === defaultFlowId
+      ? resolvePlusAccountAccessStrategyForTargetSafe(requestedPlusAccountAccessStrategy, effectiveOpenAiTargetId)
+      : requestedPlusAccountAccessStrategy,
     hostedCheckoutVerificationUrl: typeof inputHostedCheckoutVerificationUrl !== 'undefined' && inputHostedCheckoutVerificationUrl
       ? String(inputHostedCheckoutVerificationUrl.value || '').trim()
       : String(latestState?.hostedCheckoutVerificationUrl || '').trim(),
@@ -8683,12 +8876,9 @@ function getSelectedTargetIdForState(state = latestState, flowId = getSelectedFl
   if (schema?.getSelectedTargetId) {
     return schema.getSelectedTargetId(state || {}, normalizedFlowId);
   }
-  if (normalizedFlowId === DEFAULT_ACTIVE_FLOW_ID) {
-    return normalizePanelMode(state?.panelMode || getDefaultTargetIdForFlow(normalizedFlowId));
-  }
   return normalizeTargetIdForFlow(
     normalizedFlowId,
-    state?.kiroTargetId || '',
+    state?.targetId || '',
     getDefaultTargetIdForFlow(normalizedFlowId)
   );
 }
@@ -8698,14 +8888,9 @@ function getSelectedTargetId(flowId = getSelectedFlowId()) {
   const selectedValue = typeof selectPanelMode !== 'undefined' && selectPanelMode
     ? selectPanelMode.value
     : '';
-  if (normalizedFlowId === DEFAULT_ACTIVE_FLOW_ID) {
-    return normalizePanelMode(
-      selectedValue || latestState?.panelMode || getDefaultTargetIdForFlow(normalizedFlowId)
-    );
-  }
   return normalizeTargetIdForFlow(
     normalizedFlowId,
-    selectedValue || latestState?.kiroTargetId || '',
+    selectedValue || latestState?.targetId || '',
     getDefaultTargetIdForFlow(normalizedFlowId)
   );
 }
@@ -8857,24 +9042,15 @@ function resolveCurrentSidepanelCapabilities(options = {}) {
   };
   const targetId = options?.targetId !== undefined
     ? options.targetId
-    : (activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-      ? (options?.panelMode ?? state?.panelMode)
-      : (options?.kiroTargetId ?? state?.kiroTargetId));
-  if (activeFlowId === DEFAULT_ACTIVE_FLOW_ID) {
-    state.panelMode = normalizePanelMode(
-      targetId || state?.panelMode || getDefaultTargetIdForFlow(activeFlowId)
-    );
-  } else {
-    state.kiroTargetId = normalizeTargetIdForFlow(
-      activeFlowId,
-      targetId || state?.kiroTargetId || '',
-      getDefaultTargetIdForFlow(activeFlowId)
-    );
-  }
+    : (state?.targetId ?? getSelectedTargetIdForState(state, activeFlowId));
+  state.targetId = normalizeTargetIdForFlow(
+    activeFlowId,
+    targetId || state?.targetId || '',
+    getDefaultTargetIdForFlow(activeFlowId)
+  );
   return registry.resolveSidepanelCapabilities({
     activeFlowId,
-    panelMode: state?.panelMode,
-    targetId: activeFlowId === DEFAULT_ACTIVE_FLOW_ID ? state?.panelMode : state?.kiroTargetId,
+    targetId: state.targetId,
     signupMethod: options?.signupMethod ?? state?.signupMethod,
     state,
   });
@@ -8887,7 +9063,7 @@ function resolveStepDefinitionCapabilityState(state = latestState, options = {})
   };
   const capabilityState = resolveCurrentSidepanelCapabilities({
     activeFlowId: options?.activeFlowId ?? nextState?.activeFlowId,
-    panelMode: options?.panelMode ?? nextState?.panelMode,
+    targetId: options?.targetId ?? nextState?.targetId,
     signupMethod: options?.signupMethod ?? nextState?.signupMethod,
     state: nextState,
   });
@@ -8905,16 +9081,35 @@ function resolveStepDefinitionCapabilityState(state = latestState, options = {})
   };
 }
 
-function getSelectedPanelMode() {
+function getSelectedPanelMode(state = latestState) {
   const resolvedPanelMode = normalizePanelMode(
-    typeof selectPanelMode !== 'undefined' && selectPanelMode
-      ? selectPanelMode.value
-      : (typeof latestState !== 'undefined' ? latestState?.panelMode : '')
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState({
+        ...(typeof latestState !== 'undefined' ? latestState : {}),
+        ...(state || {}),
+        activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+        flowId: DEFAULT_ACTIVE_FLOW_ID,
+      }, DEFAULT_ACTIVE_FLOW_ID)
+      : (
+        typeof selectPanelMode !== 'undefined' && selectPanelMode
+          ? selectPanelMode.value
+          : (typeof state !== 'undefined' ? state?.targetId : '')
+      )
   );
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
-    ? resolveCurrentSidepanelCapabilities({ panelMode: resolvedPanelMode })
+    ? resolveCurrentSidepanelCapabilities({
+      activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+      targetId: resolvedPanelMode,
+      state: {
+        ...(typeof latestState !== 'undefined' ? latestState : {}),
+        ...(state || {}),
+        activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+        flowId: DEFAULT_ACTIVE_FLOW_ID,
+        targetId: resolvedPanelMode,
+      },
+    })
     : null;
-  return capabilityState?.effectivePanelMode || capabilityState?.panelMode || resolvedPanelMode;
+  return normalizePanelMode(capabilityState?.effectiveTargetId || resolvedPanelMode);
 }
 
 function getSelectedSignupMethod() {
@@ -8943,7 +9138,9 @@ function canSelectPhoneSignupMethod() {
     : Boolean(latestState?.accountContributionEnabled);
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
-      panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+      targetId: typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(getSelectedFlowId(latestState))
+        : latestState?.targetId,
       state: {
         ...(typeof latestState !== 'undefined' ? latestState : {}),
         phoneVerificationEnabled: phoneEnabled,
@@ -8959,7 +9156,9 @@ function canSelectPhoneSignupMethod() {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId: typeof latestState !== 'undefined' ? latestState?.activeFlowId : '',
-          panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : (latestState?.panelMode || 'cpa'),
+          targetId: typeof getSelectedTargetId === 'function'
+            ? getSelectedTargetId(getSelectedFlowId(latestState))
+            : latestState?.targetId,
           state: {
             ...(typeof latestState !== 'undefined' ? latestState : {}),
             phoneVerificationEnabled: phoneEnabled,
@@ -9061,7 +9260,9 @@ function updatePhoneVerificationSettingsUI() {
     : Boolean(latestState?.plusModeEnabled);
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
-      panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+      targetId: typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(getSelectedFlowId(latestState))
+        : latestState?.targetId,
       signupMethod: typeof getSelectedSignupMethod === 'function' ? getSelectedSignupMethod() : latestState?.signupMethod,
       state: {
         ...(latestState || {}),
@@ -9077,7 +9278,9 @@ function updatePhoneVerificationSettingsUI() {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId: latestState?.activeFlowId,
-          panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : (latestState?.panelMode || 'cpa'),
+          targetId: typeof getSelectedTargetId === 'function'
+            ? getSelectedTargetId(getSelectedFlowId(latestState))
+            : latestState?.targetId,
           signupMethod: typeof getSelectedSignupMethod === 'function' ? getSelectedSignupMethod() : latestState?.signupMethod,
           state: {
             ...(latestState || {}),
@@ -9366,7 +9569,9 @@ function updatePlusModeUI() {
     : false;
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
-      panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+      targetId: typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(getSelectedFlowId(latestState))
+        : latestState?.targetId,
       state: {
         ...(latestState || {}),
         plusModeEnabled: rawEnabled,
@@ -9381,7 +9586,9 @@ function updatePlusModeUI() {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId: latestState?.activeFlowId,
-          panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : (latestState?.panelMode || 'cpa'),
+          targetId: typeof getSelectedTargetId === 'function'
+            ? getSelectedTargetId(getSelectedFlowId(latestState))
+            : latestState?.targetId,
           state: {
             ...(latestState || {}),
             plusModeEnabled: rawEnabled,
@@ -9403,10 +9610,8 @@ function updatePlusModeUI() {
     || requestedPlusAccountAccessStrategy
     || oauthStrategyValue;
   const effectiveTargetId = resolveStrategyTargetId(
-    capabilityState?.effectivePanelMode
-    || capabilityState?.effectiveTargetId
-    || capabilityState?.panelMode
-    || (typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode)
+    capabilityState?.effectiveTargetId
+    || (typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode(latestState) : latestState?.targetId)
     || 'cpa'
   );
   const method = enabled ? getSelectedPlusPaymentMethod() : defaultMethod;
@@ -9711,7 +9916,12 @@ function syncSignupPhoneInputFromState(state = latestState) {
       : (String(rawSignupMethod || '').trim().toLowerCase() === 'phone' ? 'phone' : 'email');
     const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
       ? resolveCurrentSidepanelCapabilities({
-        panelMode: state?.panelMode || latestState?.panelMode,
+        targetId: typeof getSelectedTargetIdForState === 'function'
+          ? getSelectedTargetIdForState({
+            ...(latestState || {}),
+            ...(state || {}),
+          }, state?.activeFlowId || latestState?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID)
+          : (state?.targetId || latestState?.targetId),
         signupMethod: selectedMethod,
         state: {
           ...(latestState || {}),
@@ -9727,7 +9937,12 @@ function syncSignupPhoneInputFromState(state = latestState) {
         return registry?.resolveSidepanelCapabilities
           ? registry.resolveSidepanelCapabilities({
             activeFlowId: state?.activeFlowId || latestState?.activeFlowId,
-            panelMode: state?.panelMode || latestState?.panelMode,
+            targetId: typeof getSelectedTargetIdForState === 'function'
+              ? getSelectedTargetIdForState({
+                ...(latestState || {}),
+                ...(state || {}),
+              }, state?.activeFlowId || latestState?.activeFlowId || DEFAULT_ACTIVE_FLOW_ID)
+              : (state?.targetId || latestState?.targetId),
             signupMethod: selectedMethod,
             state: {
               ...(latestState || {}),
@@ -9925,13 +10140,44 @@ async function openPlusManualConfirmationDialog(options = {}) {
   const method = String(options.method || '').trim().toLowerCase();
   const gopayValue = typeof PLUS_PAYMENT_METHOD_GOPAY !== 'undefined' ? PLUS_PAYMENT_METHOD_GOPAY : 'gopay';
   const activeFlowId = String(latestState?.activeFlowId || latestState?.flowId || 'openai').trim().toLowerCase();
-  const panelMode = String(latestState?.panelMode || latestState?.openaiIntegrationTargetId || '').trim().toLowerCase();
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || 'openai';
+      if (normalizedFlowId === 'openai') {
+        const normalizedTargetId = String(targetId || fallback || '').trim().toLowerCase();
+        return normalizedTargetId === 'sub2api' || normalizedTargetId === 'codex2api' ? normalizedTargetId : 'cpa';
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const getDefaultTargetIdForFlowSafe = typeof getDefaultTargetIdForFlow === 'function'
+    ? getDefaultTargetIdForFlow
+    : ((flowId = 'openai') => (String(flowId || '').trim().toLowerCase() === 'openai' ? 'cpa' : 'kiro-rs'));
+  const normalizePlusStrategyTargetIdSafe = typeof normalizePlusStrategyTargetId === 'function'
+    ? normalizePlusStrategyTargetId
+    : ((value = '') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'sub2api' || normalized === 'codex2api') {
+        return normalized;
+      }
+      return 'cpa';
+    });
+  const targetId = normalizePlusStrategyTargetIdSafe(
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(latestState, activeFlowId)
+      : normalizeTargetIdForFlowSafe(
+        activeFlowId,
+        latestState?.targetId || '',
+        getDefaultTargetIdForFlowSafe(activeFlowId)
+      )
+  );
   const signupMethod = String(latestState?.resolvedSignupMethod || latestState?.signupMethod || 'email').trim().toLowerCase();
   const plusModeEnabled = latestState?.plusModeEnabled === undefined ? true : Boolean(latestState.plusModeEnabled);
   const plusAccountAccessStrategy = String(latestState?.plusAccountAccessStrategy || 'oauth').trim().toLowerCase();
   const useSub2ApiSessionImport = plusModeEnabled
     && activeFlowId === 'openai'
-    && panelMode === 'sub2api'
+    && targetId === 'sub2api'
     && signupMethod === 'email'
     && plusAccountAccessStrategy === 'sub2api_codex_session';
   const continuationActionLabel = useSub2ApiSessionImport
@@ -9996,13 +10242,44 @@ async function syncPlusManualConfirmationDialog() {
   const step = Number(latestState?.plusManualConfirmationStep) || 0;
   const method = String(latestState?.plusManualConfirmationMethod || '').trim().toLowerCase();
   const activeFlowId = String(latestState?.activeFlowId || latestState?.flowId || 'openai').trim().toLowerCase();
-  const panelMode = String(latestState?.panelMode || latestState?.openaiIntegrationTargetId || '').trim().toLowerCase();
+  const normalizeTargetIdForFlowSafe = typeof normalizeTargetIdForFlow === 'function'
+    ? normalizeTargetIdForFlow
+    : ((flowId, targetId = '', fallback = '') => {
+      const normalizedFlowId = String(flowId || '').trim().toLowerCase() || 'openai';
+      if (normalizedFlowId === 'openai') {
+        const normalizedTargetId = String(targetId || fallback || '').trim().toLowerCase();
+        return normalizedTargetId === 'sub2api' || normalizedTargetId === 'codex2api' ? normalizedTargetId : 'cpa';
+      }
+      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
+      return normalizedTargetId || String(fallback || '').trim().toLowerCase() || 'kiro-rs';
+    });
+  const getDefaultTargetIdForFlowSafe = typeof getDefaultTargetIdForFlow === 'function'
+    ? getDefaultTargetIdForFlow
+    : ((flowId = 'openai') => (String(flowId || '').trim().toLowerCase() === 'openai' ? 'cpa' : 'kiro-rs'));
+  const normalizePlusStrategyTargetIdSafe = typeof normalizePlusStrategyTargetId === 'function'
+    ? normalizePlusStrategyTargetId
+    : ((value = '') => {
+      const normalized = String(value || '').trim().toLowerCase();
+      if (normalized === 'sub2api' || normalized === 'codex2api') {
+        return normalized;
+      }
+      return 'cpa';
+    });
+  const targetId = normalizePlusStrategyTargetIdSafe(
+    typeof getSelectedTargetIdForState === 'function'
+      ? getSelectedTargetIdForState(latestState, activeFlowId)
+      : normalizeTargetIdForFlowSafe(
+        activeFlowId,
+        latestState?.targetId || '',
+        getDefaultTargetIdForFlowSafe(activeFlowId)
+      )
+  );
   const signupMethod = String(latestState?.resolvedSignupMethod || latestState?.signupMethod || 'email').trim().toLowerCase();
   const plusModeEnabled = latestState?.plusModeEnabled === undefined ? true : Boolean(latestState.plusModeEnabled);
   const plusAccountAccessStrategy = String(latestState?.plusAccountAccessStrategy || 'oauth').trim().toLowerCase();
   const useSub2ApiSessionImport = plusModeEnabled
     && activeFlowId === 'openai'
-    && panelMode === 'sub2api'
+    && targetId === 'sub2api'
     && signupMethod === 'email'
     && plusAccountAccessStrategy === 'sub2api_codex_session';
   const continuationActionLabel = useSub2ApiSessionImport
@@ -10523,7 +10800,7 @@ function syncStepDefinitionsFromUiState(stateOverrides = {}) {
   const stepDefinitionState = typeof resolveStepDefinitionCapabilityState === 'function'
     ? resolveStepDefinitionCapabilityState(nextState, {
       activeFlowId: nextState?.activeFlowId,
-      panelMode: nextState?.panelMode,
+      targetId: nextState?.targetId,
       signupMethod: nextState?.signupMethod,
       state: nextState,
     })
@@ -10616,7 +10893,7 @@ function applySettingsState(state) {
     ? syncFlowSelectorsFromState(state)
     : {
       activeFlowId: String(state?.activeFlowId || state?.flowId || defaultActiveFlowId).trim().toLowerCase() || defaultActiveFlowId,
-      targetId: String(state?.panelMode || 'cpa').trim().toLowerCase() || 'cpa',
+      targetId: String(state?.targetId || 'cpa').trim().toLowerCase() || 'cpa',
     };
   if (typeof applyOperationDelayState === 'function') {
     applyOperationDelayState(state);
@@ -10748,24 +11025,38 @@ function applySettingsState(state) {
   if (typeof displayKiroRsTestStatus !== 'undefined' && displayKiroRsTestStatus) {
     displayKiroRsTestStatus.textContent = kiroRsConnectionTestStatusText;
   }
+  const resolveKiroRuntimeState = typeof getKiroRuntimeState === 'function'
+    ? getKiroRuntimeState
+    : ((value = {}) => {
+      const runtimeState = value?.runtimeState?.flowState?.kiro;
+      if (runtimeState && typeof runtimeState === 'object' && !Array.isArray(runtimeState)) {
+        return runtimeState;
+      }
+      const flowState = value?.flowState?.kiro;
+      if (flowState && typeof flowState === 'object' && !Array.isArray(flowState)) {
+        return flowState;
+      }
+      return {};
+    });
+  const kiroRuntimeState = resolveKiroRuntimeState(state);
   if (typeof displayKiroWebStatus !== 'undefined' && displayKiroWebStatus) {
     const kiroWebStatus = String(
-      state?.kiroRuntime?.webAuth?.status
-      || state?.kiroRuntime?.register?.status
+      kiroRuntimeState?.webAuth?.status
+      || kiroRuntimeState?.register?.status
       || ''
     ).trim();
     displayKiroWebStatus.textContent = kiroWebStatus || '未开始';
   }
   if (typeof displayKiroLoginUrl !== 'undefined' && displayKiroLoginUrl) {
     const kiroLoginUrl = String(
-      state?.kiroRuntime?.register?.loginUrl
+      kiroRuntimeState?.register?.loginUrl
       || ''
     ).trim();
     displayKiroLoginUrl.textContent = kiroLoginUrl || '未打开';
   }
   if (typeof displayKiroUploadStatus !== 'undefined' && displayKiroUploadStatus) {
     const kiroUploadStatus = String(
-      state?.kiroRuntime?.upload?.status
+      kiroRuntimeState?.upload?.status
       || ''
     ).trim();
     displayKiroUploadStatus.textContent = getKiroUploadStatusLabel(kiroUploadStatus);
@@ -12404,7 +12695,9 @@ function updateMailProviderUI() {
     : latestState?.icloudHostPreference;
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
-      panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+      targetId: typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(getSelectedFlowId(latestState))
+        : latestState?.targetId,
       state: latestState || {},
     })
     : null;
@@ -13048,23 +13341,16 @@ function updatePanelModeUI() {
     : normalizeFlowId(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID);
   const targetId = typeof getSelectedTargetId === 'function'
     ? getSelectedTargetId(activeFlowId)
-    : (activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-      ? normalizePanelMode(selectPanelMode?.value || latestState?.panelMode || 'cpa')
-      : String(selectPanelMode?.value || latestState?.kiroTargetId || 'kiro-rs').trim().toLowerCase() || 'kiro-rs');
-  const rawPanelMode = activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-    ? normalizePanelMode(targetId || latestState?.panelMode || 'cpa')
-    : normalizePanelMode(latestState?.panelMode || 'cpa');
+    : normalizeTargetIdForFlow(activeFlowId, selectPanelMode?.value || latestState?.targetId || '', getDefaultTargetIdForFlow(activeFlowId));
   const capabilityState = typeof resolveCurrentSidepanelCapabilities === 'function'
     ? resolveCurrentSidepanelCapabilities({
       activeFlowId,
       targetId,
-      panelMode: rawPanelMode,
       state: {
         ...(latestState || {}),
         activeFlowId,
-        ...(activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-          ? { panelMode: rawPanelMode }
-          : { kiroTargetId: targetId }),
+        flowId: activeFlowId,
+        targetId,
       },
     })
     : null;
@@ -13089,12 +13375,16 @@ function updatePanelModeUI() {
   if (typeof updatePhoneVerificationSettingsUI === 'function') {
     updatePhoneVerificationSettingsUI();
   }
-  const panelMode = capabilityState?.effectivePanelMode || capabilityState?.panelMode || rawPanelMode;
+  const displayTargetId = normalizePanelMode(
+    activeFlowId === DEFAULT_ACTIVE_FLOW_ID
+      ? (capabilityState?.effectiveTargetId || targetId)
+      : getSelectedPanelMode(latestState)
+  );
 
-  const useCodex2Api = panelMode === 'codex2api';
+  const useCodex2Api = displayTargetId === 'codex2api';
   const step9Btn = document.querySelector('.step-btn[data-step-key="platform-verify"]');
   if (step9Btn && activeFlowId === DEFAULT_ACTIVE_FLOW_ID) {
-    step9Btn.textContent = panelMode === 'sub2api'
+    step9Btn.textContent = displayTargetId === 'sub2api'
       ? 'SUB2API 回调验证'
       : (useCodex2Api ? 'Codex2API 回调验证' : 'CPA 回调验证');
   }
@@ -14042,7 +14332,7 @@ const accountContributionManager = window.SidepanelContributionMode?.createContr
       : String(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID),
     getSelectedTargetId: (flowId, state = latestState) => (typeof getSelectedTargetIdForState === 'function'
       ? getSelectedTargetIdForState(state, flowId)
-      : (String(state?.panelMode || state?.kiroTargetId || 'cpa').trim().toLowerCase() || 'cpa')),
+      : normalizeTargetIdForFlow(flowId, state?.targetId || '', getDefaultTargetIdForFlow(flowId))),
     isModeSwitchBlocked: isContributionModeSwitchBlocked,
     openConfirmModal,
     openExternalUrl,
@@ -14570,7 +14860,9 @@ async function startAutoRunFromCurrentSettings() {
     }
     const validationState = {
       ...(latestState || {}),
-      panelMode: typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode,
+      targetId: typeof getSelectedTargetId === 'function'
+        ? getSelectedTargetId(getSelectedFlowId(latestState))
+        : latestState?.targetId,
       signupMethod: typeof getSelectedSignupMethod === 'function' ? getSelectedSignupMethod() : latestState?.signupMethod,
       phoneVerificationEnabled: typeof inputPhoneVerificationEnabled !== 'undefined' && inputPhoneVerificationEnabled
         ? Boolean(inputPhoneVerificationEnabled.checked)
@@ -14582,7 +14874,7 @@ async function startAutoRunFromCurrentSettings() {
     };
     return registry.validateAutoRunStart({
       activeFlowId: validationState.activeFlowId,
-      panelMode: validationState.panelMode,
+      targetId: validationState.targetId,
       signupMethod: validationState.signupMethod,
       state: validationState,
     });
@@ -14650,11 +14942,7 @@ async function startAutoRunFromCurrentSettings() {
     : (String(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID);
   const targetId = typeof getSelectedTargetId === 'function'
     ? getSelectedTargetId(activeFlowId)
-    : (
-      activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-        ? normalizePanelMode(latestState?.panelMode || 'cpa')
-        : (String(latestState?.kiroTargetId || 'kiro-rs').trim().toLowerCase() || 'kiro-rs')
-    );
+    : normalizeTargetIdForFlow(activeFlowId, latestState?.targetId || '', getDefaultTargetIdForFlow(activeFlowId));
   inputAutoDelayMinutes.value = String(delayMinutes);
   btnAutoRun.innerHTML = delayEnabled
     ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg> 计划中...'
@@ -15230,9 +15518,7 @@ selectPanelMode.addEventListener('change', async () => {
     : (activeFlowId === DEFAULT_ACTIVE_FLOW_ID ? 'cpa' : 'kiro-rs');
   const previousTargetId = typeof getSelectedTargetIdForState === 'function'
     ? getSelectedTargetIdForState(latestState, activeFlowId)
-    : (activeFlowId === DEFAULT_ACTIVE_FLOW_ID
-      ? normalizePanelMode(latestState?.panelMode || defaultTargetId)
-      : String(latestState?.kiroTargetId || defaultTargetId).trim().toLowerCase() || defaultTargetId);
+    : normalizeTargetIdForFlow(activeFlowId, latestState?.targetId || '', defaultTargetId);
   let nextTargetId = typeof normalizeTargetIdForFlow === 'function'
     ? normalizeTargetIdForFlow(activeFlowId, selectPanelMode.value, defaultTargetId)
     : (activeFlowId === DEFAULT_ACTIVE_FLOW_ID
@@ -15243,7 +15529,7 @@ selectPanelMode.addEventListener('change', async () => {
     selectPanelMode.value = nextPanelMode;
     const confirmed = await confirmCpaPhoneSignupIfNeeded({
       signupMethod: getSelectedSignupMethod(),
-      panelMode: nextPanelMode,
+      targetId: nextPanelMode,
     });
     if (!confirmed) {
       selectPanelMode.value = previousTargetId;
@@ -15254,7 +15540,7 @@ selectPanelMode.addEventListener('change', async () => {
     syncLatestState({
       activeFlowId,
       flowId: activeFlowId,
-      panelMode: nextPanelMode,
+      targetId: nextPanelMode,
     });
     if (
       typeof selectPlusAccountAccessStrategy !== 'undefined'
@@ -15278,7 +15564,7 @@ selectPanelMode.addEventListener('change', async () => {
     syncLatestState({
       activeFlowId,
       flowId: activeFlowId,
-      kiroTargetId: nextTargetId,
+      targetId: nextTargetId,
     });
   }
   updatePanelModeUI();
@@ -15305,7 +15591,7 @@ selectPlusAccountAccessStrategy?.addEventListener('change', () => {
   selectPlusAccountAccessStrategy.value = nextUiValue;
   selectPlusAccountAccessStrategy.dataset.requestedValue = resolvePlusAccountAccessStrategyForTarget(
     nextUiValue,
-    typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode() : latestState?.panelMode
+    typeof getSelectedPanelMode === 'function' ? getSelectedPanelMode(latestState) : latestState?.targetId
   );
   updatePlusModeUI();
   markSettingsDirty(true);
@@ -16100,19 +16386,13 @@ selectFlow?.addEventListener('change', () => {
     : (nextActiveFlowId === DEFAULT_ACTIVE_FLOW_ID ? 'cpa' : 'kiro-rs');
   const nextTargetId = typeof getSelectedTargetIdForState === 'function'
     ? getSelectedTargetIdForState(nextStateBase, nextActiveFlowId)
-    : (nextActiveFlowId === DEFAULT_ACTIVE_FLOW_ID
-      ? normalizePanelMode(nextStateBase?.panelMode || defaultTargetId)
-      : String(nextStateBase?.kiroTargetId || defaultTargetId).trim().toLowerCase() || defaultTargetId);
+    : normalizeTargetIdForFlow(nextActiveFlowId, nextStateBase?.targetId || '', defaultTargetId);
   syncLatestState({
     activeFlowId: nextActiveFlowId,
     flowId: nextActiveFlowId,
-    ...(nextActiveFlowId === DEFAULT_ACTIVE_FLOW_ID
-      ? { panelMode: normalizePanelMode(nextTargetId || defaultTargetId) }
-      : {
-        kiroTargetId: typeof normalizeTargetIdForFlow === 'function'
-          ? normalizeTargetIdForFlow(nextActiveFlowId, nextTargetId, defaultTargetId)
-          : (String(nextTargetId || defaultTargetId).trim().toLowerCase() || defaultTargetId),
-      }),
+    targetId: typeof normalizeTargetIdForFlow === 'function'
+      ? normalizeTargetIdForFlow(nextActiveFlowId, nextTargetId, defaultTargetId)
+      : (String(nextTargetId || defaultTargetId).trim().toLowerCase() || defaultTargetId),
   });
   updatePanelModeUI();
   if (typeof syncStepDefinitionsFromUiState === 'function') {
@@ -16320,7 +16600,7 @@ signupMethodButtons.forEach((button) => {
     const nextSignupMethod = normalizeSignupMethod(button.dataset.signupMethod);
     const confirmed = await confirmCpaPhoneSignupIfNeeded({
       signupMethod: nextSignupMethod,
-      panelMode: getSelectedPanelMode(),
+      targetId: getSelectedPanelMode(latestState),
     });
     if (!confirmed) {
       updateSignupMethodUI();
@@ -17047,15 +17327,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         setLocalCpaStep9Mode(message.payload.localCpaStep9Mode);
       }
       if (
-        message.payload.panelMode !== undefined
+        message.payload.targetId !== undefined
         || message.payload.activeFlowId !== undefined
         || message.payload.flowId !== undefined
-        || message.payload.kiroTargetId !== undefined
       ) {
         if (typeof syncFlowSelectorsFromState === 'function') {
           syncFlowSelectorsFromState(latestState);
-        } else if (message.payload.panelMode !== undefined) {
-          selectPanelMode.value = normalizePanelMode(message.payload.panelMode || 'cpa');
+        } else if (message.payload.targetId !== undefined) {
+          selectPanelMode.value = normalizeTargetIdForFlow(
+            latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID,
+            message.payload.targetId || '',
+            getDefaultTargetIdForFlow(latestState?.activeFlowId || latestState?.flowId || DEFAULT_ACTIVE_FLOW_ID)
+          );
         }
         updatePanelModeUI();
       }

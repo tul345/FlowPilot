@@ -1,11 +1,17 @@
-﻿// background.js — Service Worker: orchestration, state, tab management, message routing
+// background.js — Service Worker: orchestration, state, tab management, message routing
 
 importScripts(
-  'shared/flow-registry.js',
+  'flows/openai/index.js',
+  'flows/openai/workflow.js',
+  'flows/kiro/index.js',
+  'flows/kiro/workflow.js',
+  'flows/index.js',
+  'core/flow-kernel/flow-registry.js',
   'shared/contribution-registry.js',
-  'shared/settings-schema.js',
-  'shared/source-registry.js',
-  'shared/flow-capabilities.js',
+  'core/flow-kernel/settings-schema.js',
+  'imports/legacy/settings-importer.js',
+  'core/flow-kernel/source-registry.js',
+  'core/flow-kernel/flow-capabilities.js',
   'shared/kiro-timeouts.js',
   'managed-alias-utils.js',
   'mail2925-utils.js',
@@ -25,15 +31,15 @@ importScripts(
   'background/cpa-api.js',
   'background/panel-bridge.js',
   'background/registration-email-state.js',
-  'background/workflow-engine.js',
-  'background/runtime-state.js',
-  'background/kiro/state.js',
-  'background/kiro/credential-artifact.js',
+  'core/flow-kernel/workflow-engine.js',
+  'core/flow-kernel/runtime-state.js',
+  'flows/kiro/background/state.js',
+  'flows/kiro/background/credential-artifact.js',
   'background/contribution/adapters/kiro-builder-id.js',
-  'background/kiro/register-runner.js',
-  'background/kiro/desktop-client.js',
-  'background/kiro/desktop-authorize-runner.js',
-  'background/kiro/publisher-kiro-rs.js',
+  'flows/kiro/background/register-runner.js',
+  'flows/kiro/background/desktop-client.js',
+  'flows/kiro/background/desktop-authorize-runner.js',
+  'flows/kiro/background/publisher-kiro-rs.js',
   'background/generated-email-helpers.js',
   'background/signup-flow-helpers.js',
   'background/mail-rule-registry.js',
@@ -41,30 +47,30 @@ importScripts(
   'background/message-router.js',
   'background/verification-flow.js',
   'background/auto-run-controller.js',
-  'background/tab-runtime.js',
+  'core/flow-kernel/tab-runtime.js',
   'background/navigation-utils.js',
-  'background/logging-status.js',
-  'background/steps/registry.js',
+  'core/flow-kernel/logging-status.js',
+  'core/flow-kernel/step-registry.js',
   'data/step-definitions.js',
   'data/address-sources.js',
-  'background/steps/open-chatgpt.js',
-  'background/steps/submit-signup-email.js',
-  'background/steps/fill-password.js',
-  'background/steps/fetch-signup-code.js',
-  'background/steps/fill-profile.js',
-  'background/steps/wait-registration-success.js',
-  'background/steps/create-plus-checkout.js',
-  'background/steps/fill-plus-checkout.js',
-  'background/steps/gopay-manual-confirm.js',
-  'background/steps/paypal-approve.js',
-  'background/steps/gopay-approve.js',
-  'background/steps/plus-return-confirm.js',
-  'background/steps/sub2api-session-import.js',
-  'background/steps/cpa-session-import.js',
-  'background/steps/oauth-login.js',
-  'background/steps/fetch-login-code.js',
-  'background/steps/confirm-oauth.js',
-  'background/steps/platform-verify.js',
+  'flows/openai/background/steps/open-chatgpt.js',
+  'flows/openai/background/steps/submit-signup-email.js',
+  'flows/openai/background/steps/fill-password.js',
+  'flows/openai/background/steps/fetch-signup-code.js',
+  'flows/openai/background/steps/fill-profile.js',
+  'flows/openai/background/steps/wait-registration-success.js',
+  'flows/openai/background/steps/create-plus-checkout.js',
+  'flows/openai/background/steps/fill-plus-checkout.js',
+  'flows/openai/background/steps/gopay-manual-confirm.js',
+  'flows/openai/background/steps/paypal-approve.js',
+  'flows/openai/background/steps/gopay-approve.js',
+  'flows/openai/background/steps/plus-return-confirm.js',
+  'flows/openai/background/steps/sub2api-session-import.js',
+  'flows/openai/background/steps/cpa-session-import.js',
+  'flows/openai/background/steps/oauth-login.js',
+  'flows/openai/background/steps/fetch-login-code.js',
+  'flows/openai/background/steps/confirm-oauth.js',
+  'flows/openai/background/steps/platform-verify.js',
   'data/names.js',
   'hotmail-utils.js',
   'microsoft-email.js',
@@ -498,15 +504,6 @@ function buildStatePatchWithRuntimeState(currentState = {}, updates = {}) {
   if (runtimeStateHelpers?.buildSessionStatePatch) {
     nextPatch = runtimeStateHelpers.buildSessionStatePatch(currentState, nextPatch);
   }
-  if (kiroStateHelpers?.buildSessionStatePatch) {
-    const kiroPatch = kiroStateHelpers.buildSessionStatePatch(currentState, updates);
-    if (kiroPatch && Object.keys(kiroPatch).length > 0) {
-      nextPatch = {
-        ...nextPatch,
-        ...kiroPatch,
-      };
-    }
-  }
   return nextPatch;
 }
 
@@ -894,7 +891,7 @@ function buildResolvedStepDefinitionState(state = {}) {
       signupMethod: requestedSignupMethod,
     }, {
       activeFlowId: requestedActiveFlowId,
-      panelMode: state?.panelMode,
+      targetId: state?.targetId,
       signupMethod: requestedSignupMethod,
     })
     : null;
@@ -910,7 +907,6 @@ function buildResolvedStepDefinitionState(state = {}) {
     ...state,
     activeFlowId: resolvedActiveFlowId,
     flowId: resolvedActiveFlowId,
-    panelMode: stepDefinitionOptions.panelMode || capabilityState?.effectivePanelMode || state?.panelMode,
     targetId: stepDefinitionOptions.targetId || capabilityState?.effectiveTargetId || state?.targetId,
     plusModeEnabled: stepDefinitionOptions.plusModeEnabled === undefined
       ? plusModeEnabled
@@ -1178,9 +1174,8 @@ function setupDeclarativeNetRequestRules() {
 // ============================================================
 
 const PERSISTED_SETTING_DEFAULTS = {
-  panelMode: 'cpa',
+  targetId: 'cpa',
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  kiroTargetId: 'kiro-rs',
   kiroRsUrl: String(self.MultiPageFlowRegistry?.DEFAULT_KIRO_RS_URL || '').trim(),
   kiroRsKey: '',
   vpsUrl: '',
@@ -1371,9 +1366,7 @@ const PERSISTED_SETTING_KEYS = Object.keys(PERSISTED_SETTING_DEFAULTS);
 const PERSISTED_SETTINGS_SCHEMA_KEYS = ['settingsSchemaVersion', 'settingsState'];
 const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'activeFlowId',
-  'openaiIntegrationTargetId',
-  'panelMode',
-  'kiroTargetId',
+  'targetId',
   'vpsUrl',
   'vpsPassword',
   'localCpaStep9Mode',
@@ -1417,7 +1410,6 @@ const DEFAULT_STATE = {
   currentNodeId: '',
   nodeStatuses: { ...DEFAULT_NODE_STATUSES },
   runtimeState: runtimeStateHelpers?.buildDefaultRuntimeState?.() || null,
-  kiroRuntime: kiroStateHelpers?.buildDefaultRuntimeState?.() || null,
   ...CONTRIBUTION_RUNTIME_DEFAULTS,
   accounts: [], // 已生成账号记录：{ email, password, createdAt }。
   accountRunHistory: [], // 账号运行历史快照，实际持久化在 chrome.storage.local。
@@ -1819,7 +1811,7 @@ function resolveCurrentFlowCapabilities(state = {}, options = {}) {
   }
   return registry.resolveSidepanelCapabilities({
     activeFlowId: options?.activeFlowId ?? state?.activeFlowId,
-    panelMode: options?.panelMode ?? state?.panelMode,
+    targetId: options?.targetId ?? state?.targetId,
     signupMethod: options?.signupMethod ?? state?.signupMethod,
     state,
   });
@@ -1832,7 +1824,7 @@ function validateAutoRunStartState(state = {}, options = {}) {
   }
   return registry.validateAutoRunStart({
     activeFlowId: options?.activeFlowId ?? state?.activeFlowId,
-    panelMode: options?.panelMode ?? state?.panelMode,
+    targetId: options?.targetId ?? state?.targetId,
     signupMethod: options?.signupMethod ?? state?.signupMethod,
     state,
   });
@@ -1851,7 +1843,7 @@ function validateModeSwitchState(state = {}, options = {}) {
   return registry.validateModeSwitch({
     activeFlowId: options?.activeFlowId ?? state?.activeFlowId,
     changedKeys: options?.changedKeys,
-    panelMode: options?.panelMode ?? state?.panelMode,
+    targetId: options?.targetId ?? state?.targetId,
     signupMethod: options?.signupMethod ?? state?.signupMethod,
     state,
   });
@@ -1868,7 +1860,7 @@ function canUsePhoneSignup(state = {}) {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId: state?.activeFlowId,
-          panelMode: state?.panelMode,
+          targetId: state?.targetId,
           signupMethod: state?.signupMethod,
           state,
         })
@@ -1898,7 +1890,7 @@ function resolveSignupMethod(state = {}) {
       return registry?.resolveSidepanelCapabilities
         ? registry.resolveSidepanelCapabilities({
           activeFlowId: state?.activeFlowId,
-          panelMode: state?.panelMode,
+          targetId: state?.targetId,
           signupMethod: method,
           state,
         })
@@ -3049,18 +3041,13 @@ function normalizeStepExecutionRangeByFlow(value = {}) {
 
 function normalizePersistentSettingValue(key, value) {
   switch (key) {
-    case 'panelMode':
-      return normalizePanelMode(value);
+    case 'targetId':
+      return String(value || '').trim().toLowerCase();
     case 'activeFlowId':
       if (typeof self.MultiPageFlowRegistry?.normalizeFlowId === 'function') {
         return self.MultiPageFlowRegistry.normalizeFlowId(value, DEFAULT_ACTIVE_FLOW_ID);
       }
       return String(value || '').trim().toLowerCase() === 'kiro' ? 'kiro' : DEFAULT_ACTIVE_FLOW_ID;
-    case 'kiroTargetId':
-      if (typeof self.MultiPageFlowRegistry?.normalizeTargetId === 'function') {
-        return self.MultiPageFlowRegistry.normalizeTargetId('kiro', value, 'kiro-rs');
-      }
-      return String(value || '').trim().toLowerCase() === 'kiro-rs' ? 'kiro-rs' : 'kiro-rs';
     case 'kiroRsUrl':
       return String(value || '').trim();
     case 'kiroRsKey':
@@ -3575,7 +3562,7 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
   if (Object.prototype.hasOwnProperty.call(payload, 'phoneVerificationEnabled')
     || Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled')
     || Object.prototype.hasOwnProperty.call(payload, 'signupMethod')
-    || Object.prototype.hasOwnProperty.call(payload, 'panelMode')
+    || Object.prototype.hasOwnProperty.call(payload, 'targetId')
     || Object.prototype.hasOwnProperty.call(payload, 'activeFlowId')) {
     payload.signupMethod = resolveSignupMethod(nextSignupConstraintState);
   }
@@ -3689,6 +3676,13 @@ function mergeSettingsStatePatch(baseValue = {}, patchValue = {}) {
 function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   const patch = {};
   const hasUpdate = (key) => Object.prototype.hasOwnProperty.call(updates, key);
+  const normalizePatchFlowId = (value = '', fallback = DEFAULT_ACTIVE_FLOW_ID) => {
+    if (typeof self.MultiPageFlowRegistry?.normalizeFlowId === 'function') {
+      return self.MultiPageFlowRegistry.normalizeFlowId(value, fallback);
+    }
+    const normalized = String(value || '').trim().toLowerCase();
+    return normalized || String(fallback || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
+  };
   const assignIfUpdated = (key, path) => {
     if (hasUpdate(key)) {
       setSettingsStatePatchValue(patch, path, updates[key]);
@@ -3696,26 +3690,29 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   };
 
   assignIfUpdated('activeFlowId', ['activeFlowId']);
-  if (hasUpdate('openaiIntegrationTargetId') || hasUpdate('panelMode')) {
+  if (hasUpdate('selectedTargetId') || hasUpdate('targetId')) {
+    const flowId = normalizePatchFlowId(
+      updates.activeFlowId ?? updates.flowId,
+      DEFAULT_ACTIVE_FLOW_ID
+    );
     setSettingsStatePatchValue(
       patch,
-      ['flows', 'openai', 'integrationTargetId'],
-      hasUpdate('openaiIntegrationTargetId') ? updates.openaiIntegrationTargetId : updates.panelMode
+      ['flows', flowId, 'selectedTargetId'],
+      hasUpdate('selectedTargetId') ? updates.selectedTargetId : updates.targetId
     );
   }
-  assignIfUpdated('kiroTargetId', ['flows', 'kiro', 'targetId']);
-  assignIfUpdated('vpsUrl', ['flows', 'openai', 'integrationTargets', 'cpa', 'vpsUrl']);
-  assignIfUpdated('vpsPassword', ['flows', 'openai', 'integrationTargets', 'cpa', 'vpsPassword']);
-  assignIfUpdated('localCpaStep9Mode', ['flows', 'openai', 'integrationTargets', 'cpa', 'localCpaStep9Mode']);
-  assignIfUpdated('sub2apiUrl', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiUrl']);
-  assignIfUpdated('sub2apiEmail', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiEmail']);
-  assignIfUpdated('sub2apiPassword', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiPassword']);
-  assignIfUpdated('sub2apiGroupName', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiGroupName']);
-  assignIfUpdated('sub2apiGroupNames', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiGroupNames']);
-  assignIfUpdated('sub2apiAccountPriority', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiAccountPriority']);
-  assignIfUpdated('sub2apiDefaultProxyName', ['flows', 'openai', 'integrationTargets', 'sub2api', 'sub2apiDefaultProxyName']);
-  assignIfUpdated('codex2apiUrl', ['flows', 'openai', 'integrationTargets', 'codex2api', 'codex2apiUrl']);
-  assignIfUpdated('codex2apiAdminKey', ['flows', 'openai', 'integrationTargets', 'codex2api', 'codex2apiAdminKey']);
+  assignIfUpdated('vpsUrl', ['flows', 'openai', 'targets', 'cpa', 'vpsUrl']);
+  assignIfUpdated('vpsPassword', ['flows', 'openai', 'targets', 'cpa', 'vpsPassword']);
+  assignIfUpdated('localCpaStep9Mode', ['flows', 'openai', 'targets', 'cpa', 'localCpaStep9Mode']);
+  assignIfUpdated('sub2apiUrl', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiUrl']);
+  assignIfUpdated('sub2apiEmail', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiEmail']);
+  assignIfUpdated('sub2apiPassword', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiPassword']);
+  assignIfUpdated('sub2apiGroupName', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiGroupName']);
+  assignIfUpdated('sub2apiGroupNames', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiGroupNames']);
+  assignIfUpdated('sub2apiAccountPriority', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiAccountPriority']);
+  assignIfUpdated('sub2apiDefaultProxyName', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiDefaultProxyName']);
+  assignIfUpdated('codex2apiUrl', ['flows', 'openai', 'targets', 'codex2api', 'codex2apiUrl']);
+  assignIfUpdated('codex2apiAdminKey', ['flows', 'openai', 'targets', 'codex2api', 'codex2apiAdminKey']);
   assignIfUpdated('customPassword', ['services', 'account', 'customPassword']);
   assignIfUpdated('signupMethod', ['flows', 'openai', 'signup', 'signupMethod']);
   assignIfUpdated('phoneVerificationEnabled', ['flows', 'openai', 'signup', 'phoneVerificationEnabled']);
@@ -3850,6 +3847,18 @@ function buildAutoRunFreshResetSettingsState(prevState = {}, activeFlowId = DEFA
   const currentSettingsState = isPlainObjectValue(prevState?.settingsState)
     ? prevState.settingsState
     : {};
+  const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
+    ? getSettingsSchemaApi()
+    : null;
+  const normalizedCurrentSettingsState = settingsSchemaApi?.normalizeSettingsState
+    ? settingsSchemaApi.normalizeSettingsState({
+      ...prevState,
+      activeFlowId,
+      settingsState: currentSettingsState,
+    }, {
+      activeFlowId,
+    })
+    : currentSettingsState;
   const normalizedStepExecutionRangeByFlow = normalizeStepExecutionRangeByFlow(prevState?.stepExecutionRangeByFlow || {});
   const nextSettingsStatePatch = {
     activeFlowId,
@@ -3868,7 +3877,9 @@ function buildAutoRunFreshResetSettingsState(prevState = {}, activeFlowId = DEFA
     },
     flows: {
       openai: {
-        integrationTargetId: prevState?.openaiIntegrationTargetId || prevState?.panelMode,
+        selectedTargetId: settingsSchemaApi?.getSelectedTargetId
+          ? settingsSchemaApi.getSelectedTargetId(normalizedCurrentSettingsState, 'openai')
+          : undefined,
         autoRun: normalizedStepExecutionRangeByFlow.openai
           ? {
             stepExecutionRange: normalizedStepExecutionRangeByFlow.openai,
@@ -3876,7 +3887,9 @@ function buildAutoRunFreshResetSettingsState(prevState = {}, activeFlowId = DEFA
           : undefined,
       },
       kiro: {
-        targetId: prevState?.kiroTargetId,
+        selectedTargetId: settingsSchemaApi?.getSelectedTargetId
+          ? settingsSchemaApi.getSelectedTargetId(normalizedCurrentSettingsState, 'kiro')
+          : undefined,
         autoRun: normalizedStepExecutionRangeByFlow.kiro
           ? {
             stepExecutionRange: normalizedStepExecutionRangeByFlow.kiro,
@@ -3918,15 +3931,14 @@ function buildFreshAutoRunKeepState(prevState = {}) {
 
   keepState.activeFlowId = activeFlowId;
   keepState.flowId = activeFlowId;
-  if (Object.prototype.hasOwnProperty.call(sourceState, 'panelMode')) {
-    keepState.panelMode = normalizePanelMode(sourceState.panelMode);
+  const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
+    ? getSettingsSchemaApi()
+    : null;
+  if (settingsSchemaApi?.getSelectedTargetId) {
+    keepState.targetId = settingsSchemaApi.getSelectedTargetId(settingsState, activeFlowId);
   }
   if (typeof kiroStateHelpers?.buildFreshKeepState === 'function') {
     Object.assign(keepState, kiroStateHelpers.buildFreshKeepState(sourceState));
-  } else if (Object.prototype.hasOwnProperty.call(sourceState, 'kiroTargetId')) {
-    keepState.kiroTargetId = self.MultiPageFlowRegistry?.normalizeTargetId
-      ? self.MultiPageFlowRegistry.normalizeTargetId('kiro', sourceState.kiroTargetId, 'kiro-rs')
-      : String(sourceState.kiroTargetId || 'kiro-rs').trim().toLowerCase();
   }
   if (Object.prototype.hasOwnProperty.call(sourceState, 'settingsSchemaVersion')) {
     keepState.settingsSchemaVersion = Number(sourceState.settingsSchemaVersion) || 0;
@@ -4172,7 +4184,15 @@ async function importSettingsBundle(configBundle) {
     throw new Error('\u914d\u7f6e\u6587\u4ef6\u7f3a\u5c11 settings \u914d\u7f6e\u6bb5\u3002');
   }
 
-  const importedSettings = buildPersistentSettingsPayload(configBundle.settings, {
+  const settingsImporter = self.MultiPageLegacySettingsImporter?.createSettingsImporter?.({
+    flowRegistry: self.MultiPageFlowRegistry,
+    settingsSchemaApi: typeof getSettingsSchemaApi === 'function' ? getSettingsSchemaApi() : null,
+    defaultFlowId: DEFAULT_ACTIVE_FLOW_ID,
+  }) || null;
+  const importedSettingsSource = typeof settingsImporter?.importSettings === 'function'
+    ? settingsImporter.importSettings(configBundle.settings)
+    : configBundle.settings;
+  const importedSettings = buildPersistentSettingsPayload(importedSettingsSource, {
     fillDefaults: true,
     requireKnownKeys: true,
   });
@@ -4190,7 +4210,7 @@ async function importSettingsBundle(configBundle) {
     Object.prototype.hasOwnProperty.call(importedSettings, 'phoneVerificationEnabled')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'plusModeEnabled')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'signupMethod')
-    || Object.prototype.hasOwnProperty.call(importedSettings, 'panelMode')
+    || Object.prototype.hasOwnProperty.call(importedSettings, 'targetId')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'activeFlowId')
     || Object.prototype.hasOwnProperty.call(importedSettings, 'accountContributionEnabled')
   ) {
@@ -4436,7 +4456,7 @@ function buildAccountContributionState(enabled, persistedSettings = {}, currentS
       ...(routing ? {
         contributionSource: routing.source,
         contributionTargetGroupName: routing.targetGroupName,
-        panelMode: routing.source,
+        targetId: routing.source,
       } : {}),
       customPassword: '',
       accountRunHistoryTextEnabled: false,
@@ -4449,7 +4469,7 @@ function buildAccountContributionState(enabled, persistedSettings = {}, currentS
     accountContributionExpected: false,
     contributionAdapterId: '',
     flowContributionRuntime: {},
-    panelMode: persistedSettings.panelMode || DEFAULT_STATE.panelMode,
+    targetId: persistedSettings.targetId || DEFAULT_STATE.targetId,
     customPassword: persistedSettings.customPassword || '',
     accountRunHistoryTextEnabled: Boolean(persistedSettings.accountRunHistoryTextEnabled),
   };
@@ -4472,7 +4492,7 @@ async function setAccountContributionMode(enabled, options = {}) {
   }
   broadcastDataUpdate({
     ...contributionBroadcast,
-    panelMode: nextState.panelMode,
+    targetId: nextState.targetId,
     customPassword: nextState.customPassword,
     accountRunHistoryTextEnabled: nextState.accountRunHistoryTextEnabled,
     accountRunHistoryHelperBaseUrl: nextState.accountRunHistoryHelperBaseUrl,
@@ -8542,10 +8562,10 @@ function getPanelMode(state = {}) {
   if (typeof navigationUtils !== 'undefined' && navigationUtils?.getPanelMode) {
     return navigationUtils.getPanelMode(state);
   }
-  if (state.panelMode === 'sub2api') {
+  if (state.targetId === 'sub2api') {
     return 'sub2api';
   }
-  if (state.panelMode === 'codex2api') {
+  if (state.targetId === 'codex2api') {
     return 'codex2api';
   }
   return 'cpa';
@@ -8661,7 +8681,6 @@ function matchesSourceUrlFamily(source, candidateUrl, referenceUrl) {
   const reference = parseUrlSafely(referenceUrl);
   switch (source) {
     case 'openai-auth':
-    case 'signup-page':
       return isSignupPageHost(candidate.hostname) || isSignupEntryHost(candidate.hostname);
     case 'duck-mail':
       return candidate.hostname === 'duckduckgo.com' && candidate.pathname.startsWith('/email/');
@@ -8975,7 +8994,6 @@ function getSourceLabel(source) {
     'openai-auth': '认证页',
     'gmail-mail': 'Gmail 邮箱',
     'sidepanel': '侧边栏',
-    'signup-page': '认证页',
     'vps-panel': 'CPA 面板',
     'sub2api-panel': 'SUB2API 后台',
     'codex2api-panel': 'Codex2API 后台',
@@ -11544,7 +11562,7 @@ async function executeNodeAndWait(nodeId, delayAfter = 2000) {
   }
 
   if (normalizedNodeId === 'fill-profile') {
-    const signupTabId = await getTabId('signup-page');
+    const signupTabId = await getTabId('openai-auth');
     if (signupTabId) {
       await addLog('自动运行：填写资料节点已收到完成信号，正在等待当前页面完成加载并稳定...', 'info');
       await waitForTabStableComplete(signupTabId, {
@@ -12953,7 +12971,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
     continue;
   }
 
-  const signupTabId = await getTabId('signup-page');
+  const signupTabId = await getTabId('openai-auth');
   if (signupTabId) {
     await chrome.tabs.update(signupTabId, { active: true });
   }
@@ -13236,9 +13254,9 @@ async function resumeAutoRun() {
 // ============================================================
 
 const SIGNUP_ENTRY_URL = 'https://chatgpt.com/';
-const SIGNUP_PAGE_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'content/auth-page-recovery.js', 'content/phone-country-utils.js', 'content/phone-auth.js', 'content/signup-page.js'];
-const KIRO_REGISTER_INJECT_FILES = ['shared/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'content/kiro/register-page.js'];
-const KIRO_DESKTOP_AUTHORIZE_INJECT_FILES = ['shared/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'content/kiro/desktop-authorize-page.js'];
+const OPENAI_AUTH_INJECT_FILES = ['content/utils.js', 'content/operation-delay.js', 'flows/openai/content/auth-page-recovery.js', 'flows/openai/content/phone-country-utils.js', 'flows/openai/content/phone-auth.js', 'flows/openai/content/openai-auth.js'];
+const KIRO_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/register-page.js'];
+const KIRO_DESKTOP_AUTHORIZE_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/desktop-authorize-page.js'];
 const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   chrome,
   addLog,
@@ -13287,7 +13305,7 @@ const signupFlowHelpers = self.MultiPageSignupFlowHelpers?.createSignupFlowHelpe
   setEmailState,
   setState,
   SIGNUP_ENTRY_URL,
-  SIGNUP_PAGE_INJECT_FILES,
+  OPENAI_AUTH_INJECT_FILES,
   waitForTabStableComplete,
   waitForTabUrlMatch,
 });
@@ -13418,7 +13436,7 @@ const step2Executor = self.MultiPageBackgroundStep2?.createStep2Executor({
   resolveSignupMethod,
   resolveSignupEmailForFlow,
   sendToContentScriptResilient,
-  SIGNUP_PAGE_INJECT_FILES,
+  OPENAI_AUTH_INJECT_FILES,
   waitForTabStableComplete,
 });
 const step3Executor = self.MultiPageBackgroundStep3?.createStep3Executor({
@@ -13432,7 +13450,7 @@ const step3Executor = self.MultiPageBackgroundStep3?.createStep3Executor({
   sendToContentScript,
   setPasswordState,
   setState,
-  SIGNUP_PAGE_INJECT_FILES,
+  OPENAI_AUTH_INJECT_FILES,
 });
 
 async function ensureIcloudMailSessionForVerification(options = {}) {
@@ -13917,7 +13935,7 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   },
   finalizeStep3Completion: async () => {
     const currentState = await getState();
-    const signupTabId = await getTabId('signup-page');
+    const signupTabId = await getTabId('openai-auth');
     return signupFlowHelpers.finalizeSignupPasswordSubmitInTab(
       signupTabId,
       currentState.password || currentState.customPassword || '',
@@ -14143,7 +14161,7 @@ async function executeStep2(state) {
 }
 
 // ============================================================
-// Step 3: Fill Password (via signup-page.js)
+// Step 3: Fill Password (via openai-auth.js)
 // ============================================================
 
 async function executeStep3(state) {
@@ -14151,7 +14169,7 @@ async function executeStep3(state) {
 }
 
 // ============================================================
-// Step 4: Get Signup Verification Code (qq-mail.js polls, then fills in signup-page.js)
+// Step 4: Get Signup Verification Code (qq-mail.js polls, then fills in openai-auth.js)
 // ============================================================
 
 function getMailConfig(state) {
@@ -14305,7 +14323,7 @@ async function executeStep4(state) {
 }
 
 // ============================================================
-// Step 5: Fill Name & Birthday (via signup-page.js)
+// Step 5: Fill Name & Birthday (via openai-auth.js)
 // ============================================================
 
 async function executeStep5(state) {
@@ -14659,7 +14677,7 @@ async function getLoginAuthStateFromContent(options = {}) {
   const logStep = visibleStep > 0 ? visibleStep : null;
   const { logMessage = '认证页正在切换，等待页面重新就绪后继续确认验证码页状态...' } = options;
   const result = await sendToContentScriptResilient(
-    'signup-page',
+    'openai-auth',
     {
       type: 'GET_LOGIN_AUTH_STATE',
       source: 'background',
@@ -14684,7 +14702,7 @@ async function getLoginAuthStateFromContent(options = {}) {
 
 async function getStep5SubmitStateFromContent(options = {}) {
   const result = await sendToContentScriptResilient(
-    'signup-page',
+    'openai-auth',
     {
       type: 'GET_STEP5_SUBMIT_STATE',
       source: 'background',
@@ -14709,7 +14727,7 @@ async function getStep5SubmitStateFromContent(options = {}) {
 
 async function recoverStep5SubmitRetryPageOnTab(options = {}) {
   const result = await sendToContentScriptResilient(
-    'signup-page',
+    'openai-auth',
     {
       type: 'RECOVER_STEP5_SUBMIT_RETRY_PAGE',
       source: 'background',
@@ -14849,7 +14867,7 @@ async function ensureStep8VerificationPageReady(options = {}) {
       const recoverTimeoutMs = 15000;
       if (typeof sendToContentScriptResilient === 'function') {
         recoverResult = await sendToContentScriptResilient(
-          'signup-page',
+          'openai-auth',
           recoverMessage,
           {
             timeoutMs: recoverTimeoutMs,
@@ -14861,7 +14879,7 @@ async function ensureStep8VerificationPageReady(options = {}) {
           }
         );
       } else if (typeof sendToContentScript === 'function') {
-        recoverResult = await sendToContentScript('signup-page', recoverMessage, {
+        recoverResult = await sendToContentScript('openai-auth', recoverMessage, {
           responseTimeoutMs: recoverTimeoutMs,
         });
       }
@@ -15098,9 +15116,9 @@ async function shouldDeferStep9CallbackTimeout(details = {}) {
 
 async function ensureStep8SignupPageReady(tabId, options = {}) {
   const visibleStep = Math.floor(Number(options.visibleStep || options.logStep || options.step) || 0);
-  await ensureContentScriptReadyOnTab('signup-page', tabId, {
-    inject: SIGNUP_PAGE_INJECT_FILES,
-    injectSource: 'signup-page',
+  await ensureContentScriptReadyOnTab('openai-auth', tabId, {
+    inject: OPENAI_AUTH_INJECT_FILES,
+    injectSource: 'openai-auth',
     timeoutMs: options.timeoutMs ?? 15000,
     retryDelayMs: options.retryDelayMs ?? 600,
     logMessage: options.logMessage || '',
@@ -15142,7 +15160,7 @@ async function readAuthTabSnapshot(tabId) {
 
 async function getStep8PageState(tabId, responseTimeoutMs = 1500, visibleStep = 9) {
   try {
-    const result = await sendTabMessageWithTimeout(tabId, 'signup-page', {
+    const result = await sendTabMessageWithTimeout(tabId, 'openai-auth', {
       type: 'STEP8_GET_STATE',
       source: 'background',
       payload: { visibleStep },
@@ -15219,7 +15237,7 @@ async function prepareStep8DebuggerClick(tabId, options = {}) {
     logStepKey: 'confirm-oauth',
     logMessage: '认证页内容脚本已失联，正在恢复后继续定位按钮...',
   });
-  const result = await sendToContentScriptResilient('signup-page', {
+  const result = await sendToContentScriptResilient('openai-auth', {
     type: 'STEP8_FIND_AND_CLICK',
     source: 'background',
     payload: { visibleStep, nodeId: 'confirm-oauth' },
@@ -15249,7 +15267,7 @@ async function triggerStep8ContentStrategy(tabId, strategy, options = {}) {
     logStepKey: 'confirm-oauth',
     logMessage: '认证页内容脚本已失联，正在恢复后继续点击“继续”按钮...',
   });
-  const result = await sendToContentScriptResilient('signup-page', {
+  const result = await sendToContentScriptResilient('openai-auth', {
     type: 'STEP8_TRIGGER_CONTINUE',
     source: 'background',
     payload: {
@@ -15287,7 +15305,7 @@ async function recoverAuthRetryPageOnTab(tabId, payload = {}, options = {}) {
     logStepKey: 'confirm-oauth',
     logMessage: options.readyLogMessage || '认证页内容脚本已失联，正在恢复后继续处理重试页...',
   });
-  const result = await sendToContentScriptResilient('signup-page', {
+  const result = await sendToContentScriptResilient('openai-auth', {
     type: 'RECOVER_AUTH_RETRY_PAGE',
     source: 'background',
     payload: { nodeId: 'confirm-oauth', ...(payload || {}) },

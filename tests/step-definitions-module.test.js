@@ -1,12 +1,11 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
+const { readStepDefinitionsBundle } = require('./helpers/script-bundles.js');
 
 test('step definitions module exposes ordered normal and Plus step metadata', () => {
-  const source = fs.readFileSync('data/step-definitions.js', 'utf8');
   const globalScope = {};
-
-  const api = new Function('self', `${source}; return self.MultiPageStepDefinitions;`)(globalScope);
+  const api = new Function('self', `${readStepDefinitionsBundle()}; return self.MultiPageStepDefinitions;`)(globalScope);
   const steps = api.getSteps();
   const phoneSteps = api.getSteps({ signupMethod: 'phone' });
   const phoneReloginSteps = api.getSteps({
@@ -180,7 +179,7 @@ test('step definitions module exposes ordered normal and Plus step metadata', ()
     ]
   );
   assert.equal(kiroSteps.every((step) => step.flowId === 'kiro'), true);
-  assert.equal(kiroSteps[0].driverId, 'background/kiro-register');
+  assert.equal(kiroSteps[0].driverId, 'flows/kiro/background/register-runner');
   assert.equal(kiroSteps[8].sourceId, 'kiro-rs-admin');
   assert.equal(kiroSteps[0].title, '打开注册页');
   assert.equal(kiroSteps[1].title, '获取邮箱并继续');
@@ -286,9 +285,8 @@ test('step definitions module exposes ordered normal and Plus step metadata', ()
 });
 
 test('Plus session strategy swaps the OAuth tail for a single SUB2API import node', () => {
-  const source = fs.readFileSync('data/step-definitions.js', 'utf8');
   const globalScope = {};
-  const api = new Function('self', `${source}; return self.MultiPageStepDefinitions;`)(globalScope);
+  const api = new Function('self', `${readStepDefinitionsBundle()}; return self.MultiPageStepDefinitions;`)(globalScope);
   const forbiddenTailKeys = [
     'oauth-login',
     'fetch-login-code',
@@ -360,9 +358,8 @@ test('Plus session strategy swaps the OAuth tail for a single SUB2API import nod
 });
 
 test('Plus phone signup never switches to SUB2API session tail even if the requested strategy is session import', () => {
-  const source = fs.readFileSync('data/step-definitions.js', 'utf8');
   const globalScope = {};
-  const api = new Function('self', `${source}; return self.MultiPageStepDefinitions;`)(globalScope);
+  const api = new Function('self', `${readStepDefinitionsBundle()}; return self.MultiPageStepDefinitions;`)(globalScope);
   const steps = api.getSteps({
     plusModeEnabled: true,
     plusPaymentMethod: 'paypal',
@@ -377,9 +374,8 @@ test('Plus phone signup never switches to SUB2API session tail even if the reque
 });
 
 test('Plus session strategy swaps the OAuth tail for a single CPA import node', () => {
-  const source = fs.readFileSync('data/step-definitions.js', 'utf8');
   const globalScope = {};
-  const api = new Function('self', `${source}; return self.MultiPageStepDefinitions;`)(globalScope);
+  const api = new Function('self', `${readStepDefinitionsBundle()}; return self.MultiPageStepDefinitions;`)(globalScope);
   const forbiddenTailKeys = [
     'oauth-login',
     'fetch-login-code',
