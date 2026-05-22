@@ -259,112 +259,6 @@ function getActionText(el) {
     .trim();
 }
 
-function hasEmailTokenBoundary(text, start, end) {
-  const before = start > 0 ? text[start - 1] : '';
-  const after = end < text.length ? text[end] : '';
-  return (!before || !/[A-Z0-9._%+-]/i.test(before))
-    && (!after || !/[A-Z0-9_%+-]/i.test(after));
-}
-
-function isValidEmailCandidate(value = '') {
-  const candidate = String(value || '').trim();
-  const atIndex = candidate.lastIndexOf('@');
-  if (atIndex <= 0 || atIndex !== candidate.indexOf('@')) {
-    return false;
-  }
-
-  const local = candidate.slice(0, atIndex);
-  const domain = candidate.slice(atIndex + 1);
-  if (!local || !domain || local.startsWith('.') || local.endsWith('.') || local.includes('..')) {
-    return false;
-  }
-  if (!/^[A-Z0-9._%+-]+$/i.test(local)) {
-    return false;
-  }
-
-  const labels = domain.split('.');
-  if (labels.length < 2) {
-    return false;
-  }
-  for (const label of labels) {
-    if (!/^[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?$/i.test(label)) {
-      return false;
-    }
-  }
-
-  const tld = labels[labels.length - 1];
-  return /^[A-Z]{2,63}$/i.test(tld) && !/[a-z][A-Z]/.test(tld);
-}
-
-function getEmailFromTextFragment(value = '') {
-  const text = String(value || '').replace(/\s+/g, ' ').trim();
-  if (!text) {
-    return '';
-  }
-  const pattern = /[A-Z0-9._%+-]+@(?:[A-Z0-9-]+\.)+[A-Z]{2,63}/ig;
-  for (const match of text.matchAll(pattern)) {
-    const candidate = String(match[0] || '');
-    const start = Number(match.index || 0);
-    const end = start + candidate.length;
-    if (hasEmailTokenBoundary(text, start, end) && isValidEmailCandidate(candidate)) {
-      return candidate.toLowerCase();
-    }
-  }
-  return '';
-}
-
-function getVisibleTextNodeEmail() {
-  if (typeof document?.createTreeWalker !== 'function' || !document.body) {
-    return '';
-  }
-  const showText = typeof NodeFilter !== 'undefined' ? NodeFilter.SHOW_TEXT : 4;
-  const walker = document.createTreeWalker(document.body, showText);
-  let node = walker.nextNode();
-  while (node) {
-    const parent = node.parentElement || node.parentNode || null;
-    const text = String(node.nodeValue || '').trim();
-    if (text && (!parent || typeof isVisibleElement !== 'function' || isVisibleElement(parent))) {
-      const email = getEmailFromTextFragment(text);
-      if (email) {
-        return email;
-      }
-    }
-    node = walker.nextNode();
-  }
-  return '';
-}
-
-function getDisplayedEmailFromDocument() {
-  const fieldCandidates = Array.from(document.querySelectorAll?.('input, textarea') || []);
-  for (const field of fieldCandidates) {
-    const email = getEmailFromTextFragment(field?.value || field?.getAttribute?.('value') || '');
-    if (email) {
-      return email;
-    }
-  }
-
-  const attributeCandidates = Array.from(document.querySelectorAll?.('[aria-label], [title]') || []);
-  for (const el of attributeCandidates) {
-    if (typeof isVisibleElement === 'function' && !isVisibleElement(el)) {
-      continue;
-    }
-    const email = getEmailFromTextFragment([
-      el?.getAttribute?.('aria-label'),
-      el?.getAttribute?.('title'),
-    ].filter(Boolean).join(' '));
-    if (email) {
-      return email;
-    }
-  }
-
-  const textNodeEmail = getVisibleTextNodeEmail();
-  if (textNodeEmail) {
-    return textNodeEmail;
-  }
-
-  return '';
-}
-
 function isActionEnabled(el) {
   return Boolean(el)
     && !el.disabled
@@ -821,7 +715,11 @@ function findSignupEntryTrigger(options = {}) {
 }
 
 function getSignupPasswordDisplayedEmail() {
-  return getDisplayedEmailFromDocument();
+  const text = (document.body?.innerText || document.body?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const matches = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig);
+  return matches?.[0] ? String(matches[0]).trim().toLowerCase() : '';
 }
 
 function inspectSignupEntryState() {
@@ -3130,7 +3028,9 @@ function getPageTextSnapshot() {
 }
 
 function getLoginVerificationDisplayedEmail() {
-  return getDisplayedEmailFromDocument();
+  const pageText = getPageTextSnapshot();
+  const matches = pageText.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/ig) || [];
+  return matches[0] ? String(matches[0]).trim().toLowerCase() : '';
 }
 
 function getPhoneVerificationDisplayedPhone() {

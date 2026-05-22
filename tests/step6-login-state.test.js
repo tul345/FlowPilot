@@ -51,12 +51,6 @@ function extractFunction(name) {
 }
 
 const bundle = [
-  extractFunction('hasEmailTokenBoundary'),
-  extractFunction('isValidEmailCandidate'),
-  extractFunction('getEmailFromTextFragment'),
-  extractFunction('getVisibleTextNodeEmail'),
-  extractFunction('getDisplayedEmailFromDocument'),
-  extractFunction('getSignupPasswordDisplayedEmail'),
   extractFunction('getPageTextSnapshot'),
   extractFunction('getLoginVerificationDisplayedEmail'),
   extractFunction('getPhoneVerificationDisplayedPhone'),
@@ -80,38 +74,8 @@ const document = {
     innerText: ${JSON.stringify(overrides.pageText || '')},
     textContent: ${JSON.stringify(overrides.pageText || '')},
   },
-  querySelectorAll(selector) {
-    if (selector === 'input, textarea') {
-      return ${JSON.stringify(overrides.fields || [])};
-    }
-    if (selector === '[aria-label], [title]') {
-      return ${JSON.stringify(overrides.attributeElements || [])};
-    }
-    return [];
-  },
   querySelector() {
     return null;
-  },
-  createTreeWalker() {
-    const textNodeValues = ${JSON.stringify(
-      Object.prototype.hasOwnProperty.call(overrides, 'textNodes')
-        ? overrides.textNodes
-        : [overrides.pageText || '']
-    )};
-    const nodes = textNodeValues.map((text) => ({
-      nodeValue: text,
-      parentElement: {
-        getBoundingClientRect() {
-          return { width: 1, height: 1 };
-        },
-      },
-    }));
-    let index = 0;
-    return {
-      nextNode() {
-        return nodes[index++] || null;
-      },
-    };
   },
 };
 
@@ -185,8 +149,6 @@ return {
   inspectLoginAuthState,
   isPhoneVerificationPageReady,
   normalizeStep6Snapshot,
-  getSignupPasswordDisplayedEmail,
-  getLoginVerificationDisplayedEmail,
 };
 `)();
 }
@@ -215,49 +177,6 @@ return {
 
   const snapshot = api.inspectLoginAuthState();
   assert.strictEqual(snapshot.displayedEmail, 'display.user@example.com');
-}
-
-{
-  const api = createApi({
-    verificationTarget: { id: 'otp' },
-    pageText: 'We emailed a code to skater-twine-carve@duck.comChange',
-    textNodes: ['We emailed a code to ', 'skater-twine-carve@duck.com', 'Change'],
-  });
-
-  const snapshot = api.inspectLoginAuthState();
-  assert.strictEqual(snapshot.displayedEmail, 'skater-twine-carve@duck.com');
-}
-
-{
-  const api = createApi({
-    verificationTarget: { id: 'otp' },
-    pageText: 'We emailed a code to skater-twine-carve@duck.comChange',
-    textNodes: ['We emailed a code to skater-twine-carve@duck.comChange'],
-  });
-
-  const snapshot = api.inspectLoginAuthState();
-  assert.strictEqual(snapshot.displayedEmail, '');
-}
-
-{
-  const api = createApi({
-    pageText: 'Create your account skater-twine-carve@duck.comChange',
-    textNodes: ['Create your account ', 'skater-twine-carve@duck.com', 'Change'],
-  });
-
-  assert.strictEqual(api.getSignupPasswordDisplayedEmail(), 'skater-twine-carve@duck.com');
-}
-
-{
-  const api = createApi({
-    verificationTarget: { id: 'otp' },
-    pageText: 'We emailed a code to skater-twine-carve@duck.comChange',
-    textNodes: ['We emailed a code to skater-twine-carve@duck.comChange'],
-    fields: [{ value: 'skater-twine-carve@duck.com' }],
-  });
-
-  const snapshot = api.inspectLoginAuthState();
-  assert.strictEqual(snapshot.displayedEmail, 'skater-twine-carve@duck.com');
 }
 
 {
