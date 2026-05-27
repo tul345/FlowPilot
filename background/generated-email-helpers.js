@@ -5,6 +5,7 @@
     const {
       addLog,
       buildGeneratedAliasEmail,
+      buildCloudflareTempEmailEffectiveDomain,
       buildCloudflareTempEmailHeaders,
       CLOUDFLARE_TEMP_EMAIL_GENERATOR,
       CUSTOM_EMAIL_POOL_GENERATOR,
@@ -92,6 +93,12 @@
       if (requireDomain && !config.domain) {
         throw new Error('Cloudflare Temp Email 域名为空或格式无效。');
       }
+      if (config.useFixedSubdomain && !config.effectiveDomain && typeof buildCloudflareTempEmailEffectiveDomain === 'function') {
+        config.effectiveDomain = buildCloudflareTempEmailEffectiveDomain(config);
+      }
+      if (requireDomain && config.useFixedSubdomain && !config.effectiveDomain) {
+        throw new Error('Cloudflare Temp Email 固定子域前缀为空或格式无效。');
+      }
       return config;
     }
 
@@ -159,11 +166,16 @@
         requireDomain: true,
       });
       const requestedName = String(options.localPart || options.name || '').trim().toLowerCase() || generateCloudflareAliasLocalPart();
+      const effectiveDomain = config.effectiveDomain || (
+        typeof buildCloudflareTempEmailEffectiveDomain === 'function'
+          ? buildCloudflareTempEmailEffectiveDomain(config)
+          : config.domain
+      );
       const payload = {
         enablePrefix: true,
-        enableRandomSubdomain: Boolean(config.useRandomSubdomain),
+        enableRandomSubdomain: config.useFixedSubdomain ? false : Boolean(config.useRandomSubdomain),
         name: requestedName,
-        domain: config.domain,
+        domain: effectiveDomain,
       };
       const result = await requestCloudflareTempEmailJson(config, '/admin/new_address', {
         method: 'POST',

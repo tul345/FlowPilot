@@ -371,6 +371,7 @@ const {
 } = self.LuckMailUtils;
 const {
   DEFAULT_MAIL_PAGE_SIZE: CLOUDFLARE_TEMP_EMAIL_DEFAULT_PAGE_SIZE,
+  buildCloudflareTempEmailEffectiveDomain,
   buildCloudflareTempEmailHeaders,
   getCloudflareTempEmailAddressFromResponse,
   joinCloudflareTempEmailUrl,
@@ -379,6 +380,7 @@ const {
   normalizeCloudflareTempEmailDomain,
   normalizeCloudflareTempEmailDomains,
   normalizeCloudflareTempEmailMailApiMessages,
+  normalizeCloudflareTempEmailSubdomainPrefix,
 } = self.CloudflareTempEmailUtils;
 const {
   DEFAULT_MAIL_PAGE_SIZE: CLOUD_MAIL_DEFAULT_PAGE_SIZE,
@@ -1428,6 +1430,8 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudflareTempEmailLookupMode: DEFAULT_CLOUDFLARE_TEMP_EMAIL_LOOKUP_MODE,
   cloudflareTempEmailReceiveMailbox: '',
   cloudflareTempEmailUseRandomSubdomain: false,
+  cloudflareTempEmailUseFixedSubdomain: false,
+  cloudflareTempEmailSubdomainPrefix: '',
   cloudflareTempEmailDomain: '',
   cloudflareTempEmailDomains: [],
   cloudMailBaseUrl: '',
@@ -2899,15 +2903,24 @@ function getHotmailServiceSettings(state = {}) {
 }
 
 function getCloudflareTempEmailConfig(state = {}) {
-  return {
+  const useFixedSubdomain = Boolean(state.cloudflareTempEmailUseFixedSubdomain);
+  const subdomainPrefix = normalizeCloudflareTempEmailSubdomainPrefix(state.cloudflareTempEmailSubdomainPrefix);
+  const domain = normalizeCloudflareTempEmailDomain(state.cloudflareTempEmailDomain);
+  const config = {
     baseUrl: normalizeCloudflareTempEmailBaseUrl(state.cloudflareTempEmailBaseUrl),
     adminAuth: String(state.cloudflareTempEmailAdminAuth || ''),
     customAuth: String(state.cloudflareTempEmailCustomAuth || ''),
     lookupMode: normalizeCloudflareTempEmailLookupMode(state.cloudflareTempEmailLookupMode),
     receiveMailbox: normalizeCloudflareTempEmailReceiveMailbox(state.cloudflareTempEmailReceiveMailbox),
-    useRandomSubdomain: Boolean(state.cloudflareTempEmailUseRandomSubdomain),
-    domain: normalizeCloudflareTempEmailDomain(state.cloudflareTempEmailDomain),
+    useRandomSubdomain: useFixedSubdomain ? false : Boolean(state.cloudflareTempEmailUseRandomSubdomain),
+    useFixedSubdomain,
+    subdomainPrefix,
+    domain,
     domains: normalizeCloudflareTempEmailDomains(state.cloudflareTempEmailDomains),
+  };
+  return {
+    ...config,
+    effectiveDomain: buildCloudflareTempEmailEffectiveDomain(config),
   };
 }
 
@@ -3402,6 +3415,7 @@ function normalizePersistentSettingValue(key, value) {
     case 'autoDeleteUsedIcloudAlias':
     case 'accountRunHistoryTextEnabled':
     case 'cloudflareTempEmailUseRandomSubdomain':
+    case 'cloudflareTempEmailUseFixedSubdomain':
       return Boolean(value);
     case 'icloudHostPreference':
       return normalizeIcloudHost(value) || 'auto';
@@ -3455,6 +3469,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeCloudflareTempEmailLookupMode(value);
     case 'cloudflareTempEmailReceiveMailbox':
       return normalizeCloudflareTempEmailReceiveMailbox(value);
+    case 'cloudflareTempEmailSubdomainPrefix':
+      return normalizeCloudflareTempEmailSubdomainPrefix(value);
     case 'cloudflareTempEmailDomain':
       return normalizeCloudflareTempEmailDomain(value);
     case 'cloudflareTempEmailDomains':
@@ -3612,6 +3628,9 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
       domains.unshift(payload.cloudflareTempEmailDomain);
     }
     payload.cloudflareTempEmailDomains = domains;
+  }
+  if (payload.cloudflareTempEmailUseFixedSubdomain) {
+    payload.cloudflareTempEmailUseRandomSubdomain = false;
   }
   if (payload.cloudMailDomains) {
     const domains = normalizeCloudMailDomains(payload.cloudMailDomains);
@@ -11840,6 +11859,7 @@ function getCurrentPayPalAccount(state = null) {
 const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGeneratedEmailHelpers({
   addLog,
   buildGeneratedAliasEmail,
+  buildCloudflareTempEmailEffectiveDomain,
   buildCloudflareTempEmailHeaders,
   CLOUDFLARE_TEMP_EMAIL_GENERATOR,
   CUSTOM_EMAIL_POOL_GENERATOR,
