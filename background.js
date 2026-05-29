@@ -21,6 +21,7 @@ importScripts(
   'gopay-utils.js',
   'phone-sms/providers/hero-sms.js',
   'phone-sms/providers/five-sim.js',
+  'phone-sms/providers/nexsms.js',
   'phone-sms/providers/madao.js',
   'phone-sms/providers/registry.js',
   'background/phone-verification-flow.js',
@@ -1452,6 +1453,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   madaoRoutingPlanId: '',
   madaoProviderId: '',
   madaoCountry: '',
+  madaoOperator: '',
   madaoAutoPickCountry: true,
   madaoReusePhone: true,
   madaoMinPrice: '',
@@ -2242,6 +2244,13 @@ function normalizeMaDaoCountry(value = '') {
 
 function normalizeMaDaoPrice(value = '') {
   return normalizeHeroSmsMaxPrice(value);
+}
+
+function normalizeMaDaoOperator(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, '');
 }
 
 function normalizePhonePreferredActivation(value) {
@@ -3594,6 +3603,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeMaDaoProviderId(value);
     case 'madaoCountry':
       return normalizeMaDaoCountry(value);
+    case 'madaoOperator':
+      return normalizeMaDaoOperator(value);
     case 'madaoAutoPickCountry':
     case 'madaoReusePhone':
       return Boolean(value);
@@ -13876,8 +13887,6 @@ const phoneVerificationHelpers = self.MultiPageBackgroundPhoneVerification?.crea
   setState,
   sleepWithStop,
   throwIfStopped,
-  createFiveSimProvider: self.PhoneSmsFiveSimProvider?.createProvider,
-  createMaDaoProvider: self.PhoneSmsMaDaoProvider?.createProvider,
 });
 const step1Executor = self.MultiPageBackgroundStep1?.createStep1Executor({
   addLog,

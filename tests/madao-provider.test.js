@@ -38,6 +38,7 @@ test('MaDao direct acquire sends only direct fields and normalizes activation da
     madaoRoutingPlanId: 'route-plan-should-not-be-sent',
     madaoProviderId: 'Upstream A!',
     madaoCountry: 'gb',
+    madaoOperator: 'Operator A!',
     madaoAutoPickCountry: 'false',
     madaoReusePhone: '1',
     madaoMinPrice: '0.01',
@@ -54,6 +55,9 @@ test('MaDao direct acquire sends only direct fields and normalizes activation da
     auto_pick_country: false,
     reuse_phone: true,
     country: 'GB',
+    metadata: {
+      operator: 'operatora',
+    },
     min_price: 0.01,
     max_price: 0.2,
   });
@@ -98,6 +102,37 @@ test('MaDao routing acquire sends routing plan only', async () => {
   });
   assert.equal(activation.madaoRoutingPlanId, 'rp-openai');
   assert.equal(activation.madaoRoutingItemId, 'route-1');
+});
+
+test('MaDao direct acquire treats any operator as default route', async () => {
+  const requests = [];
+  const provider = api.createProvider({
+    fetchImpl: async (_url, options = {}) => {
+      requests.push({ body: JSON.parse(options.body) });
+      return createJsonResponse({
+        ticket_id: 'ticket-any',
+        phone_number: '+66111111111',
+        country: 'TH',
+        provider: 'fivesim',
+      });
+    },
+  });
+
+  await provider.acquireActivation({
+    madaoMode: 'direct',
+    madaoProviderId: 'fivesim',
+    madaoCountry: 'TH',
+    madaoOperator: 'Any operator',
+  });
+
+  assert.equal(requests.length, 1);
+  assert.deepEqual(requests[0].body, {
+    provider: 'fivesim',
+    service: 'openai',
+    auto_pick_country: true,
+    reuse_phone: true,
+    country: 'TH',
+  });
 });
 
 test('MaDao poll extracts codes from nested messages and reports pending status', async () => {

@@ -460,6 +460,7 @@ const rowMaDaoMode = document.getElementById('row-madao-mode');
 const rowMaDaoRoutingPlanId = document.getElementById('row-madao-routing-plan-id');
 const rowMaDaoProviderId = document.getElementById('row-madao-provider-id');
 const rowMaDaoCountry = document.getElementById('row-madao-country');
+const rowMaDaoOperator = document.getElementById('row-madao-operator');
 const rowMaDaoAutoPickCountry = document.getElementById('row-madao-auto-pick-country');
 const rowMaDaoReusePhone = document.getElementById('row-madao-reuse-phone');
 const rowMaDaoPriceRange = document.getElementById('row-madao-price-range');
@@ -494,9 +495,14 @@ const inputMaDaoBaseUrl = document.getElementById('input-madao-base-url');
 const inputMaDaoHttpSecret = document.getElementById('input-madao-http-secret');
 const btnToggleMaDaoHttpSecret = document.getElementById('btn-toggle-madao-http-secret');
 const selectMaDaoMode = document.getElementById('select-madao-mode');
-const inputMaDaoRoutingPlanId = document.getElementById('input-madao-routing-plan-id');
-const inputMaDaoProviderId = document.getElementById('input-madao-provider-id');
-const inputMaDaoCountry = document.getElementById('input-madao-country');
+const selectMaDaoRoutingPlanId = document.getElementById('select-madao-routing-plan-id');
+const btnMaDaoRefreshRoutingPlans = document.getElementById('btn-madao-refresh-routing-plans');
+const selectMaDaoProviderId = document.getElementById('select-madao-provider-id');
+const btnMaDaoRefreshProviders = document.getElementById('btn-madao-refresh-providers');
+const selectMaDaoCountry = document.getElementById('select-madao-country');
+const btnMaDaoRefreshCountries = document.getElementById('btn-madao-refresh-countries');
+const selectMaDaoOperator = document.getElementById('select-madao-operator');
+const btnMaDaoRefreshOperators = document.getElementById('btn-madao-refresh-operators');
 const inputMaDaoAutoPickCountry = document.getElementById('input-madao-auto-pick-country');
 const inputMaDaoReusePhone = document.getElementById('input-madao-reuse-phone');
 const inputMaDaoMinPrice = document.getElementById('input-madao-min-price');
@@ -689,6 +695,10 @@ const DEFAULT_MADAO_BASE_URL = 'http://127.0.0.1:7822';
 const MADAO_MODE_ROUTING_PLAN = 'routing_plan';
 const MADAO_MODE_DIRECT = 'direct';
 const DEFAULT_MADAO_MODE = MADAO_MODE_ROUTING_PLAN;
+let maDaoRoutingPlanOptions = [];
+let maDaoProviderOptions = [];
+let maDaoCountryOptions = [];
+let maDaoOperatorOptions = [];
 const PHONE_SMS_PROVIDER_UI_DESCRIPTORS = Object.freeze({
   [PHONE_SMS_PROVIDER_HERO]: Object.freeze({
     rowKeys: Object.freeze([
@@ -734,8 +744,7 @@ const PHONE_SMS_PROVIDER_UI_DESCRIPTORS = Object.freeze({
     directRowKeys: Object.freeze([
       'rowMaDaoProviderId',
       'rowMaDaoCountry',
-      'rowMaDaoAutoPickCountry',
-      'rowMaDaoReusePhone',
+      'rowMaDaoOperator',
       'rowMaDaoPriceRange',
     ]),
   }),
@@ -765,6 +774,7 @@ function getPhoneSmsProviderUiRowMap() {
     rowMaDaoRoutingPlanId,
     rowMaDaoProviderId,
     rowMaDaoCountry,
+    rowMaDaoOperator,
     rowMaDaoAutoPickCountry,
     rowMaDaoReusePhone,
     rowMaDaoPriceRange,
@@ -4455,6 +4465,9 @@ function collectSettingsPayload() {
   const normalizeMaDaoProviderIdSafe = typeof normalizeMaDaoProviderIdValue === 'function'
     ? normalizeMaDaoProviderIdValue
     : ((value = '') => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''));
+  const normalizeMaDaoOperatorSafe = typeof normalizeMaDaoOperatorValue === 'function'
+    ? normalizeMaDaoOperatorValue
+    : ((value = '') => String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, ''));
   const normalizeMaDaoCountrySafe = typeof normalizeMaDaoCountry === 'function'
     ? normalizeMaDaoCountry
     : ((value = '') => {
@@ -4638,15 +4651,22 @@ function collectSettingsPayload() {
   const maDaoModeValue = typeof selectMaDaoMode !== 'undefined' && selectMaDaoMode
     ? normalizeMaDaoModeSafe(selectMaDaoMode.value || latestState?.madaoMode)
     : normalizeMaDaoModeSafe(latestState?.madaoMode);
-  const maDaoRoutingPlanIdValue = typeof inputMaDaoRoutingPlanId !== 'undefined' && inputMaDaoRoutingPlanId
-    ? normalizeMaDaoIdentifierSafe(inputMaDaoRoutingPlanId.value || '')
+  const maDaoRoutingPlanIdValue = typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId
+    ? normalizeMaDaoIdentifierSafe(selectMaDaoRoutingPlanId.value || '')
     : normalizeMaDaoIdentifierSafe(latestState?.madaoRoutingPlanId || '');
-  const maDaoProviderIdValue = typeof inputMaDaoProviderId !== 'undefined' && inputMaDaoProviderId
-    ? normalizeMaDaoProviderIdSafe(inputMaDaoProviderId.value || '')
+  const maDaoDirectModeValue = typeof MADAO_MODE_DIRECT !== 'undefined'
+    ? MADAO_MODE_DIRECT
+    : 'direct';
+  const shouldReadMaDaoDirectControls = maDaoModeValue === maDaoDirectModeValue;
+  const maDaoProviderIdValue = shouldReadMaDaoDirectControls && typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId
+    ? normalizeMaDaoProviderIdSafe(selectMaDaoProviderId.value || '')
     : normalizeMaDaoProviderIdSafe(latestState?.madaoProviderId || '');
-  const maDaoCountryValue = typeof inputMaDaoCountry !== 'undefined' && inputMaDaoCountry
-    ? normalizeMaDaoCountrySafe(inputMaDaoCountry.value || '')
+  const maDaoCountryValue = shouldReadMaDaoDirectControls && typeof selectMaDaoCountry !== 'undefined' && selectMaDaoCountry
+    ? normalizeMaDaoCountrySafe(selectMaDaoCountry.value || '')
     : normalizeMaDaoCountrySafe(latestState?.madaoCountry || '');
+  const maDaoOperatorValue = shouldReadMaDaoDirectControls && typeof selectMaDaoOperator !== 'undefined' && selectMaDaoOperator
+    ? normalizeMaDaoOperatorSafe(selectMaDaoOperator.value || '')
+    : normalizeMaDaoOperatorSafe(latestState?.madaoOperator || '');
   const maDaoAutoPickCountryValue = typeof inputMaDaoAutoPickCountry !== 'undefined' && inputMaDaoAutoPickCountry
     ? Boolean(inputMaDaoAutoPickCountry.checked)
     : (latestState?.madaoAutoPickCountry !== undefined ? Boolean(latestState.madaoAutoPickCountry) : true);
@@ -5273,6 +5293,7 @@ function collectSettingsPayload() {
     madaoRoutingPlanId: maDaoRoutingPlanIdValue,
     madaoProviderId: maDaoProviderIdValue,
     madaoCountry: maDaoCountryValue,
+    madaoOperator: maDaoOperatorValue,
     madaoAutoPickCountry: maDaoAutoPickCountryValue,
     madaoReusePhone: maDaoReusePhoneValue,
     madaoMinPrice: maDaoMinPriceValue,
@@ -5675,8 +5696,21 @@ function normalizeMaDaoIdentifierValue(value = '') {
   return String(value || '').trim();
 }
 
+function normalizeMaDaoRoutingPlanIdValue(value = '') {
+  return normalizeMaDaoIdentifierValue(value);
+}
+
 function normalizeMaDaoProviderIdValue(value = '') {
   return String(value || '').trim().toLowerCase().replace(/[^a-z0-9_-]+/g, '');
+}
+
+function normalizeMaDaoOperatorValue(value = '') {
+  const rawValue = String(value || '').trim();
+  const compactValue = rawValue.toLowerCase().replace(/[^a-z0-9]+/g, '');
+  if (!rawValue || compactValue === 'any' || compactValue === 'anyoperator') {
+    return '';
+  }
+  return rawValue.toLowerCase().replace(/[^a-z0-9_-]+/g, '');
 }
 
 function normalizeMaDaoCountry(value = '') {
@@ -5694,6 +5728,22 @@ function normalizeMaDaoCountry(value = '') {
   return lowered.replace(/[^a-z0-9_-]+/g, '');
 }
 
+function formatMaDaoCountryDisplayLabel(value = '', label = '', labelZh = '') {
+  const country = normalizeMaDaoCountry(value);
+  const sourceLabelZh = String(labelZh || '').trim();
+  const sourceLabel = String(label || '').trim();
+  if (!country) {
+    return sourceLabelZh || sourceLabel;
+  }
+  if (country === 'local') {
+    return sourceLabelZh || '本地';
+  }
+  if (country === 'any') {
+    return sourceLabelZh || '任意国家';
+  }
+  return sourceLabelZh || sourceLabel || country;
+}
+
 function normalizeMaDaoPriceValue(value = '') {
   const rawValue = String(value ?? '').trim();
   if (!rawValue) {
@@ -5704,6 +5754,493 @@ function normalizeMaDaoPriceValue(value = '') {
     return '';
   }
   return String(Math.round(numeric * 10000) / 10000);
+}
+
+function createSelectOptionElement(value = '', label = '', title = '') {
+  const option = typeof document !== 'undefined' && typeof document.createElement === 'function'
+    ? document.createElement('option')
+    : { value: '', textContent: '', title: '', selected: false };
+  option.value = String(value || '');
+  option.textContent = String(label || value || '').trim();
+  const normalizedTitle = String(title || '').trim();
+  if (normalizedTitle) {
+    option.title = normalizedTitle;
+  }
+  return option;
+}
+
+function setSelectOptions(selectEl, items = [], options = {}) {
+  if (!selectEl) {
+    return;
+  }
+  const placeholder = String(options.placeholder || '').trim();
+  const includeEmpty = options.includeEmpty !== false;
+  const emptyValue = options.emptyValue !== undefined ? String(options.emptyValue) : '';
+  const selectedValue = String(options.value !== undefined ? options.value : selectEl.value || '').trim();
+  const optionItems = [];
+  if (includeEmpty) {
+    optionItems.push({
+      value: emptyValue,
+      label: placeholder || '请选择',
+    });
+  }
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const value = String(item?.value ?? '').trim();
+    if (!value) {
+      return;
+    }
+    optionItems.push({
+      value,
+      label: String(item?.label || value).trim(),
+      hint: String(item?.hint || '').trim(),
+    });
+  });
+
+  if (typeof selectEl.replaceChildren === 'function') {
+    selectEl.replaceChildren(...optionItems.map((item) => createSelectOptionElement(item.value, item.label, item.hint)));
+  } else if (typeof selectEl.appendChild === 'function') {
+    selectEl.innerHTML = '';
+    optionItems.forEach((item) => {
+      selectEl.appendChild(createSelectOptionElement(item.value, item.label, item.hint));
+    });
+  } else {
+    selectEl.options = optionItems.map((item) => createSelectOptionElement(item.value, item.label, item.hint));
+  }
+
+  const values = new Set(optionItems.map((item) => item.value));
+  const nextValue = values.has(selectedValue)
+    ? selectedValue
+    : (includeEmpty ? emptyValue : (optionItems[0]?.value || ''));
+  selectEl.value = nextValue;
+  Array.from(selectEl.options || []).forEach((option) => {
+    option.selected = String(option.value || '') === nextValue;
+  });
+}
+
+function buildMaDaoRoutingPlanOptions(items = [], selectedValue = '') {
+  const selectedPlanId = normalizeMaDaoRoutingPlanIdValue(selectedValue);
+  const seen = new Set();
+  const normalizedItems = [];
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const value = normalizeMaDaoRoutingPlanIdValue(
+      item?.value
+      || item?.id
+      || item?.routing_plan_id
+      || item?.routingPlanId
+      || ''
+    );
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    normalizedItems.push({
+      value,
+      label: String(item?.label || item?.name || value).trim() || value,
+      hint: String(item?.hint || item?.description || '').trim(),
+      service: String(item?.service || '').trim().toLowerCase(),
+    });
+  });
+  if (selectedPlanId && !seen.has(selectedPlanId)) {
+    normalizedItems.unshift({
+      value: selectedPlanId,
+      label: selectedPlanId,
+      hint: '已保存的路由计划',
+    });
+  }
+  return normalizedItems;
+}
+
+function setMaDaoRoutingPlanSelectOptions(selectedValue = latestState?.madaoRoutingPlanId || '') {
+  const normalizedSelected = normalizeMaDaoRoutingPlanIdValue(selectedValue);
+  const options = buildMaDaoRoutingPlanOptions(maDaoRoutingPlanOptions, normalizedSelected);
+  setSelectOptions(selectMaDaoRoutingPlanId, options, {
+    placeholder: '请先刷新路由计划',
+    value: normalizedSelected,
+  });
+}
+
+function normalizeMaDaoOptionListItems(items = [], selectedValue = '', normalizeValue = normalizeMaDaoIdentifierValue, selectedHint = '已保存的选项') {
+  const normalizedSelected = normalizeValue(selectedValue);
+  const seen = new Set();
+  const normalizedItems = [];
+  (Array.isArray(items) ? items : []).forEach((item) => {
+    const value = normalizeValue(
+      item?.value
+      || item?.id
+      || item?.provider
+      || item?.provider_value
+      || item?.providerValue
+      || item?.country
+      || item?.operator
+      || ''
+    );
+    if (!value || seen.has(value)) {
+      return;
+    }
+    seen.add(value);
+    normalizedItems.push({
+      value,
+      label: String(item?.label || item?.name || item?.display_name || item?.displayName || value).trim() || value,
+      labelZh: String(item?.label_zh || item?.labelZh || item?.display_name_zh || item?.displayNameZh || '').trim(),
+      hint: String(item?.hint || item?.description || item?.provider_value || item?.providerValue || '').trim(),
+      enabled: item?.enabled !== false,
+    });
+  });
+  if (normalizedSelected && !seen.has(normalizedSelected)) {
+    normalizedItems.unshift({
+      value: normalizedSelected,
+      label: normalizedSelected,
+      hint: selectedHint,
+      enabled: true,
+    });
+  }
+  return normalizedItems.filter((item) => item.enabled !== false);
+}
+
+function resolveMaDaoOptionSelectedValue(items = [], selectedValue = '', normalizeValue = normalizeMaDaoIdentifierValue) {
+  const normalizedSelected = normalizeValue(selectedValue);
+  if (!normalizedSelected) {
+    return '';
+  }
+  const sourceItems = Array.isArray(items) ? items : [];
+  for (const item of sourceItems) {
+    const value = normalizeValue(
+      item?.value
+      || item?.id
+      || item?.provider
+      || item?.provider_value
+      || item?.providerValue
+      || item?.country
+      || item?.operator
+      || ''
+    );
+    if (!value) {
+      continue;
+    }
+    const aliases = [
+      item?.value,
+      item?.id,
+      item?.provider,
+      item?.provider_value,
+      item?.providerValue,
+      item?.country,
+      item?.operator,
+      item?.label,
+      item?.label_zh,
+      item?.labelZh,
+      item?.name,
+      item?.display_name,
+      item?.displayName,
+    ];
+    if (aliases.some((alias) => normalizeValue(alias || '') === normalizedSelected)) {
+      return value;
+    }
+  }
+  return normalizedSelected;
+}
+
+function setMaDaoProviderSelectOptions(selectedValue = latestState?.madaoProviderId || '') {
+  const normalizedSelected = resolveMaDaoOptionSelectedValue(
+    maDaoProviderOptions,
+    selectedValue,
+    normalizeMaDaoProviderIdValue
+  );
+  const options = normalizeMaDaoOptionListItems(
+    maDaoProviderOptions,
+    normalizedSelected,
+    normalizeMaDaoProviderIdValue,
+    '已保存的服务商'
+  );
+  setSelectOptions(selectMaDaoProviderId, options, {
+    placeholder: '请先刷新服务商',
+    value: normalizedSelected,
+  });
+}
+
+function setMaDaoCountrySelectOptions(selectedValue = latestState?.madaoCountry || '') {
+  const normalizedSelected = resolveMaDaoOptionSelectedValue(
+    maDaoCountryOptions,
+    selectedValue,
+    normalizeMaDaoCountry
+  );
+  const options = normalizeMaDaoOptionListItems(
+    maDaoCountryOptions,
+    normalizedSelected,
+    normalizeMaDaoCountry,
+    '已保存的国家'
+  ).map((item) => ({
+    ...item,
+    label: formatMaDaoCountryDisplayLabel(item.value, item.label, item.labelZh),
+  }));
+  setSelectOptions(selectMaDaoCountry, options, {
+    placeholder: '请先选择服务商',
+    value: normalizedSelected,
+  });
+}
+
+function setMaDaoOperatorSelectOptions(selectedValue = latestState?.madaoOperator || '') {
+  const normalizedSelected = resolveMaDaoOptionSelectedValue(
+    maDaoOperatorOptions,
+    selectedValue,
+    normalizeMaDaoOperatorValue
+  );
+  const options = normalizeMaDaoOptionListItems(
+    maDaoOperatorOptions,
+    normalizedSelected,
+    normalizeMaDaoOperatorValue,
+    '已保存的线路'
+  );
+  setSelectOptions(selectMaDaoOperator, options, {
+    placeholder: '任意线路',
+    value: normalizedSelected,
+  });
+}
+
+function buildMaDaoRequestUrl(path = '', baseUrl = '') {
+  const normalizedBaseUrl = normalizeMaDaoBaseUrlValue(baseUrl || latestState?.madaoBaseUrl || DEFAULT_MADAO_BASE_URL);
+  return new URL(String(path || '').replace(/^\/+/, ''), `${normalizedBaseUrl.replace(/\/+$/, '')}/`).toString();
+}
+
+function buildMaDaoRequestHeaders(httpSecret = '') {
+  const headers = { Accept: 'application/json' };
+  const normalizedSecret = String(httpSecret || '').trim();
+  if (normalizedSecret) {
+    headers.Authorization = `Bearer ${normalizedSecret}`;
+  }
+  return headers;
+}
+
+async function fetchMaDaoJson(path = '', options = {}) {
+  const baseUrl = typeof inputMaDaoBaseUrl !== 'undefined' && inputMaDaoBaseUrl
+    ? normalizeMaDaoBaseUrlValue(inputMaDaoBaseUrl.value || latestState?.madaoBaseUrl)
+    : normalizeMaDaoBaseUrlValue(latestState?.madaoBaseUrl);
+  const httpSecret = typeof inputMaDaoHttpSecret !== 'undefined' && inputMaDaoHttpSecret
+    ? String(inputMaDaoHttpSecret.value || '')
+    : String(latestState?.madaoHttpSecret || '');
+  const response = await fetch(buildMaDaoRequestUrl(path, baseUrl), {
+    method: options.method || 'GET',
+    headers: {
+      ...buildMaDaoRequestHeaders(httpSecret),
+      ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
+    },
+    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    cache: 'no-store',
+  });
+  const text = await response.text();
+  let payload = null;
+  if (text) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      payload = { message: text };
+    }
+  }
+  if (!response.ok) {
+    const message = String(payload?.message || payload?.error || response.statusText || `HTTP ${response.status}`).trim();
+    throw new Error(message || 'MaDao 请求失败');
+  }
+  return payload;
+}
+
+function getMaDaoRoutingPlansFromPayload(payload = {}) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.plans)) {
+    return payload.plans;
+  }
+  if (Array.isArray(payload?.data?.plans)) {
+    return payload.data.plans;
+  }
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  return [];
+}
+
+function getMaDaoProvidersFromPayload(payload = {}) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.providers)) {
+    return payload.providers;
+  }
+  if (Array.isArray(payload?.data?.providers)) {
+    return payload.data.providers;
+  }
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  return [];
+}
+
+function getMaDaoOptionItemsFromPayload(payload = {}) {
+  if (Array.isArray(payload)) {
+    return payload;
+  }
+  if (Array.isArray(payload?.items)) {
+    return payload.items;
+  }
+  if (Array.isArray(payload?.data?.items)) {
+    return payload.data.items;
+  }
+  if (Array.isArray(payload?.data)) {
+    return payload.data;
+  }
+  return [];
+}
+
+function getSelectedMaDaoProviderId() {
+  return normalizeMaDaoProviderIdValue(
+    typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId
+      ? selectMaDaoProviderId.value
+      : latestState?.madaoProviderId
+  );
+}
+
+function getSelectedMaDaoCountry() {
+  return normalizeMaDaoCountry(
+    typeof selectMaDaoCountry !== 'undefined' && selectMaDaoCountry
+      ? selectMaDaoCountry.value
+      : latestState?.madaoCountry
+  );
+}
+
+async function loadMaDaoRoutingPlans(options = {}) {
+  const selectedValue = normalizeMaDaoRoutingPlanIdValue(
+    typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId
+      ? selectMaDaoRoutingPlanId.value
+      : latestState?.madaoRoutingPlanId
+  );
+  const payload = await fetchMaDaoJson('/api/routing-plans');
+  const plans = getMaDaoRoutingPlansFromPayload(payload);
+  maDaoRoutingPlanOptions = plans
+    .filter((plan) => plan?.enabled !== false)
+    .filter((plan) => {
+      const service = String(plan?.service || '').trim().toLowerCase();
+      return !service || service === 'openai';
+    })
+    .map((plan) => ({
+      value: normalizeMaDaoRoutingPlanIdValue(plan?.id || plan?.routing_plan_id || plan?.routingPlanId || plan?.value || ''),
+      label: String(plan?.name || plan?.label || plan?.id || plan?.routing_plan_id || '').trim(),
+      hint: String(plan?.description || plan?.hint || '').trim(),
+      service: String(plan?.service || '').trim().toLowerCase(),
+    }))
+    .filter((plan) => plan.value);
+  setMaDaoRoutingPlanSelectOptions(selectedValue);
+  updateHeroSmsPlatformDisplay();
+  if (!options.silent && typeof showToast === 'function') {
+    showToast('已刷新 MaDao 路由计划。', 'info', 1600);
+  }
+  return maDaoRoutingPlanOptions;
+}
+
+async function loadMaDaoProviders(options = {}) {
+  const selectedValue = normalizeMaDaoProviderIdValue(
+    (typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId
+      ? selectMaDaoProviderId.value
+      : '')
+      || latestState?.madaoProviderId
+  );
+  const payload = await fetchMaDaoJson('/api/providers');
+  maDaoProviderOptions = getMaDaoProvidersFromPayload(payload)
+    .filter((provider) => provider?.enabled !== false)
+    .map((provider) => ({
+      value: normalizeMaDaoProviderIdValue(provider?.id || provider?.value || provider?.provider || ''),
+      label: String(provider?.name || provider?.label || provider?.id || provider?.value || '').trim(),
+      hint: String(provider?.description || provider?.hint || provider?.protocol_label || provider?.protocolLabel || provider?.kind || '').trim(),
+      enabled: provider?.enabled !== false,
+    }))
+    .filter((provider) => provider.value);
+  setMaDaoProviderSelectOptions(selectedValue);
+  if (!options.skipChildren && getSelectedMaDaoProviderId()) {
+    await loadMaDaoCountries({ silent: true }).catch(() => {
+      setMaDaoCountrySelectOptions(latestState?.madaoCountry || '');
+      setMaDaoOperatorSelectOptions(latestState?.madaoOperator || '');
+    });
+  }
+  updateHeroSmsPlatformDisplay();
+  if (!options.silent && typeof showToast === 'function') {
+    showToast('已刷新 MaDao 服务商。', 'info', 1600);
+  }
+  return maDaoProviderOptions;
+}
+
+async function loadMaDaoCountries(options = {}) {
+  const providerId = getSelectedMaDaoProviderId();
+  const selectedValue = normalizeMaDaoCountry(
+    (typeof selectMaDaoCountry !== 'undefined' && selectMaDaoCountry
+      ? selectMaDaoCountry.value
+      : '')
+      || latestState?.madaoCountry
+  );
+  if (!providerId) {
+    maDaoCountryOptions = [];
+    maDaoOperatorOptions = [];
+    setMaDaoCountrySelectOptions(selectedValue);
+    setMaDaoOperatorSelectOptions(latestState?.madaoOperator || '');
+    return maDaoCountryOptions;
+  }
+  const payload = await fetchMaDaoJson(`/api/providers/${encodeURIComponent(providerId)}/countries`);
+  maDaoCountryOptions = getMaDaoOptionItemsFromPayload(payload);
+  setMaDaoCountrySelectOptions(selectedValue);
+  if (!options.skipChildren) {
+    await loadMaDaoOperators({ silent: true }).catch(() => {
+      setMaDaoOperatorSelectOptions(latestState?.madaoOperator || '');
+    });
+  }
+  updateHeroSmsPlatformDisplay();
+  if (!options.silent && typeof showToast === 'function') {
+    showToast('已刷新 MaDao 国家。', 'info', 1600);
+  }
+  return maDaoCountryOptions;
+}
+
+async function loadMaDaoOperators(options = {}) {
+  const providerId = getSelectedMaDaoProviderId();
+  const country = getSelectedMaDaoCountry();
+  const selectedValue = normalizeMaDaoOperatorValue(
+    typeof selectMaDaoOperator !== 'undefined' && selectMaDaoOperator
+      ? selectMaDaoOperator.value
+      : latestState?.madaoOperator
+  );
+  if (!providerId) {
+    maDaoOperatorOptions = [];
+    setMaDaoOperatorSelectOptions(selectedValue);
+    return maDaoOperatorOptions;
+  }
+  const payload = await fetchMaDaoJson(`/api/providers/${encodeURIComponent(providerId)}/operators`, {
+    method: 'POST',
+    body: country ? { country } : {},
+  });
+  maDaoOperatorOptions = getMaDaoOptionItemsFromPayload(payload);
+  setMaDaoOperatorSelectOptions(selectedValue);
+  updateHeroSmsPlatformDisplay();
+  if (!options.silent && typeof showToast === 'function') {
+    showToast('已刷新 MaDao 线路。', 'info', 1600);
+  }
+  return maDaoOperatorOptions;
+}
+
+function getSelectedMaDaoRoutingPlanLabel(value = '') {
+  const selectedValue = normalizeMaDaoRoutingPlanIdValue(
+    value
+    || (typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId
+      ? selectMaDaoRoutingPlanId.value
+      : latestState?.madaoRoutingPlanId)
+    || ''
+  );
+  if (!selectedValue) {
+    return 'routing plan';
+  }
+  const matched = maDaoRoutingPlanOptions.find((item) => normalizeMaDaoRoutingPlanIdValue(item?.value) === selectedValue);
+  return String(matched?.label || selectedValue).trim() || 'routing plan';
 }
 
 function normalizePhoneSmsProviderValue(value = '') {
@@ -7071,7 +7608,7 @@ function updateHeroSmsPlatformDisplay() {
     : (provider === PHONE_SMS_PROVIDER_NEXSMS
       ? (getSelectedNexSmsCountries()[0] || { id: DEFAULT_NEX_SMS_COUNTRY_ORDER[0], label: `Country #${DEFAULT_NEX_SMS_COUNTRY_ORDER[0]}` })
       : (provider === PHONE_SMS_PROVIDER_MADAO
-        ? { id: normalizeMaDaoCountry(inputMaDaoCountry?.value || latestState?.madaoCountry || ''), label: normalizeMaDaoModeValue(selectMaDaoMode?.value || latestState?.madaoMode) === MADAO_MODE_DIRECT ? (normalizeMaDaoCountry(inputMaDaoCountry?.value || latestState?.madaoCountry || '') || 'auto') : 'routing plan' }
+        ? { id: '', label: normalizeMaDaoModeValue(selectMaDaoMode?.value || latestState?.madaoMode) === MADAO_MODE_DIRECT ? 'direct' : getSelectedMaDaoRoutingPlanLabel() }
         : getSelectedHeroSmsCountryOption()));
   const countryText = selected?.label ? ` / ${selected.label}` : '';
   displayHeroSmsPlatform.textContent = `${getPhoneSmsProviderLabel(provider)} / OpenAI${countryText}`;
@@ -11817,7 +12354,18 @@ function applySettingsState(state) {
   updatePhoneSmsProviderOrderSummary(restoredPhoneSmsProviderOrder);
   if (previousPhoneSmsProvider !== restoredPhoneSmsProvider) {
     heroSmsCountrySelectionOrder = [];
-    loadHeroSmsCountries({ silent: true }).catch(() => { });
+    if (restoredPhoneSmsProvider === PHONE_SMS_PROVIDER_MADAO) {
+      loadMaDaoRoutingPlans({ silent: true }).catch(() => {
+        setMaDaoRoutingPlanSelectOptions(state?.madaoRoutingPlanId || '');
+      });
+      loadMaDaoProviders({ silent: true }).catch(() => {
+        setMaDaoProviderSelectOptions(state?.madaoProviderId || '');
+        setMaDaoCountrySelectOptions(state?.madaoCountry || '');
+        setMaDaoOperatorSelectOptions(state?.madaoOperator || '');
+      });
+    } else {
+      loadHeroSmsCountries({ silent: true }).catch(() => { });
+    }
   }
   if (inputHeroSmsApiKey) {
     inputHeroSmsApiKey.value = restoredPhoneSmsProvider === PHONE_SMS_PROVIDER_FIVE_SIM
@@ -11854,14 +12402,17 @@ function applySettingsState(state) {
   if (typeof selectMaDaoMode !== 'undefined' && selectMaDaoMode) {
     selectMaDaoMode.value = normalizeMaDaoModeValue(state?.madaoMode);
   }
-  if (typeof inputMaDaoRoutingPlanId !== 'undefined' && inputMaDaoRoutingPlanId) {
-    inputMaDaoRoutingPlanId.value = normalizeMaDaoIdentifierValue(state?.madaoRoutingPlanId || '');
+  if (typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId) {
+    setMaDaoRoutingPlanSelectOptions(state?.madaoRoutingPlanId || '');
   }
-  if (typeof inputMaDaoProviderId !== 'undefined' && inputMaDaoProviderId) {
-    inputMaDaoProviderId.value = normalizeMaDaoProviderIdValue(state?.madaoProviderId || '');
+  if (typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId) {
+    setMaDaoProviderSelectOptions(state?.madaoProviderId || '');
   }
-  if (typeof inputMaDaoCountry !== 'undefined' && inputMaDaoCountry) {
-    inputMaDaoCountry.value = normalizeMaDaoCountry(state?.madaoCountry || '');
+  if (typeof selectMaDaoCountry !== 'undefined' && selectMaDaoCountry) {
+    setMaDaoCountrySelectOptions(state?.madaoCountry || '');
+  }
+  if (typeof selectMaDaoOperator !== 'undefined' && selectMaDaoOperator) {
+    setMaDaoOperatorSelectOptions(state?.madaoOperator || '');
   }
   if (typeof inputMaDaoAutoPickCountry !== 'undefined' && inputMaDaoAutoPickCountry) {
     inputMaDaoAutoPickCountry.checked = state?.madaoAutoPickCountry !== undefined
@@ -17159,15 +17710,35 @@ function buildPhoneSmsProviderStatePatch(provider = getSelectedPhoneSmsProvider(
     };
   }
   if (normalizedProvider === PHONE_SMS_PROVIDER_MADAO) {
+    const maDaoMode = normalizeMaDaoModeValue(selectMaDaoMode?.value || latestState?.madaoMode);
+    const maDaoDirectModeValue = typeof MADAO_MODE_DIRECT !== 'undefined'
+      ? MADAO_MODE_DIRECT
+      : 'direct';
+    const shouldReadMaDaoDirectControls = maDaoMode === maDaoDirectModeValue;
     return {
       madaoBaseUrl: normalizeMaDaoBaseUrlValue(inputMaDaoBaseUrl?.value || latestState?.madaoBaseUrl),
       madaoHttpSecret: String(inputMaDaoHttpSecret?.value || ''),
-      madaoMode: normalizeMaDaoModeValue(selectMaDaoMode?.value || latestState?.madaoMode),
-      madaoRoutingPlanId: normalizeMaDaoIdentifierValue(inputMaDaoRoutingPlanId?.value || ''),
-      madaoProviderId: normalizeMaDaoProviderIdValue(inputMaDaoProviderId?.value || ''),
-      madaoCountry: normalizeMaDaoCountry(inputMaDaoCountry?.value || ''),
-      madaoAutoPickCountry: Boolean(inputMaDaoAutoPickCountry?.checked),
-      madaoReusePhone: Boolean(inputMaDaoReusePhone?.checked),
+      madaoMode: maDaoMode,
+      madaoRoutingPlanId: normalizeMaDaoRoutingPlanIdValue(
+        typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId
+          ? selectMaDaoRoutingPlanId.value
+          : latestState?.madaoRoutingPlanId
+      ),
+      madaoProviderId: shouldReadMaDaoDirectControls
+        ? normalizeMaDaoProviderIdValue(selectMaDaoProviderId?.value || '')
+        : normalizeMaDaoProviderIdValue(latestState?.madaoProviderId || ''),
+      madaoCountry: shouldReadMaDaoDirectControls
+        ? normalizeMaDaoCountry(selectMaDaoCountry?.value || '')
+        : normalizeMaDaoCountry(latestState?.madaoCountry || ''),
+      madaoOperator: shouldReadMaDaoDirectControls
+        ? normalizeMaDaoOperatorValue(selectMaDaoOperator?.value || '')
+        : normalizeMaDaoOperatorValue(latestState?.madaoOperator || ''),
+      madaoAutoPickCountry: typeof inputMaDaoAutoPickCountry !== 'undefined' && inputMaDaoAutoPickCountry
+        ? Boolean(inputMaDaoAutoPickCountry.checked)
+        : (latestState?.madaoAutoPickCountry !== undefined ? Boolean(latestState.madaoAutoPickCountry) : true),
+      madaoReusePhone: typeof inputMaDaoReusePhone !== 'undefined' && inputMaDaoReusePhone
+        ? Boolean(inputMaDaoReusePhone.checked)
+        : (latestState?.madaoReusePhone !== undefined ? Boolean(latestState.madaoReusePhone) : true),
       madaoMinPrice: normalizeMaDaoPriceValue(inputMaDaoMinPrice?.value || ''),
       madaoMaxPrice: normalizeMaDaoPriceValue(inputMaDaoMaxPrice?.value || ''),
     };
@@ -17210,14 +17781,17 @@ function applyPhoneSmsProviderFieldsToInputs(provider = getSelectedPhoneSmsProvi
   if (typeof selectMaDaoMode !== 'undefined' && selectMaDaoMode) {
     selectMaDaoMode.value = normalizeMaDaoModeValue(state?.madaoMode);
   }
-  if (typeof inputMaDaoRoutingPlanId !== 'undefined' && inputMaDaoRoutingPlanId) {
-    inputMaDaoRoutingPlanId.value = normalizeMaDaoIdentifierValue(state?.madaoRoutingPlanId || '');
+  if (typeof selectMaDaoRoutingPlanId !== 'undefined' && selectMaDaoRoutingPlanId) {
+    setMaDaoRoutingPlanSelectOptions(state?.madaoRoutingPlanId || '');
   }
-  if (typeof inputMaDaoProviderId !== 'undefined' && inputMaDaoProviderId) {
-    inputMaDaoProviderId.value = normalizeMaDaoProviderIdValue(state?.madaoProviderId || '');
+  if (typeof selectMaDaoProviderId !== 'undefined' && selectMaDaoProviderId) {
+    setMaDaoProviderSelectOptions(state?.madaoProviderId || '');
   }
-  if (typeof inputMaDaoCountry !== 'undefined' && inputMaDaoCountry) {
-    inputMaDaoCountry.value = normalizeMaDaoCountry(state?.madaoCountry || '');
+  if (typeof selectMaDaoCountry !== 'undefined' && selectMaDaoCountry) {
+    setMaDaoCountrySelectOptions(state?.madaoCountry || '');
+  }
+  if (typeof selectMaDaoOperator !== 'undefined' && selectMaDaoOperator) {
+    setMaDaoOperatorSelectOptions(state?.madaoOperator || '');
   }
   if (typeof inputMaDaoAutoPickCountry !== 'undefined' && inputMaDaoAutoPickCountry) {
     inputMaDaoAutoPickCountry.checked = state?.madaoAutoPickCountry !== undefined
@@ -17296,6 +17870,15 @@ async function switchPhoneSmsProvider(nextProvider) {
     applyNexSmsCountrySelection(
       Array.isArray(latestState?.nexSmsCountryOrder) ? latestState.nexSmsCountryOrder : []
     );
+  } else if (normalizedNextProvider === PHONE_SMS_PROVIDER_MADAO) {
+    await loadMaDaoRoutingPlans({ silent: true }).catch(() => {
+      setMaDaoRoutingPlanSelectOptions(latestState?.madaoRoutingPlanId || '');
+    });
+    await loadMaDaoProviders({ silent: true }).catch(() => {
+      setMaDaoProviderSelectOptions(latestState?.madaoProviderId || '');
+      setMaDaoCountrySelectOptions(latestState?.madaoCountry || '');
+      setMaDaoOperatorSelectOptions(latestState?.madaoOperator || '');
+    });
   } else if (normalizedNextProvider === PHONE_SMS_PROVIDER_HERO_SMS) {
     await loadHeroSmsCountries({ silent: true });
     const restoredPrimary = {
@@ -17502,36 +18085,87 @@ selectMaDaoMode?.addEventListener('change', () => {
   selectMaDaoMode.value = normalizeMaDaoModeValue(selectMaDaoMode.value);
   updateHeroSmsPlatformDisplay();
   updatePhoneVerificationSettingsUI();
+  if (selectMaDaoMode.value === MADAO_MODE_ROUTING_PLAN) {
+    loadMaDaoRoutingPlans({ silent: true }).catch(() => {
+      setMaDaoRoutingPlanSelectOptions(latestState?.madaoRoutingPlanId || '');
+    });
+  } else {
+    loadMaDaoProviders({ silent: true }).catch(() => {
+      setMaDaoProviderSelectOptions(latestState?.madaoProviderId || '');
+      setMaDaoCountrySelectOptions(latestState?.madaoCountry || '');
+      setMaDaoOperatorSelectOptions(latestState?.madaoOperator || '');
+    });
+  }
   markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
 });
 
-inputMaDaoRoutingPlanId?.addEventListener('input', () => {
-  markSettingsDirty(true);
-  scheduleSettingsAutoSave();
-});
-inputMaDaoRoutingPlanId?.addEventListener('blur', () => {
-  inputMaDaoRoutingPlanId.value = normalizeMaDaoIdentifierValue(inputMaDaoRoutingPlanId.value);
-  saveSettings({ silent: true }).catch(() => { });
-});
-
-inputMaDaoProviderId?.addEventListener('input', () => {
-  markSettingsDirty(true);
-  scheduleSettingsAutoSave();
-});
-inputMaDaoProviderId?.addEventListener('blur', () => {
-  inputMaDaoProviderId.value = normalizeMaDaoProviderIdValue(inputMaDaoProviderId.value);
-  saveSettings({ silent: true }).catch(() => { });
-});
-
-inputMaDaoCountry?.addEventListener('input', () => {
-  markSettingsDirty(true);
-  scheduleSettingsAutoSave();
-});
-inputMaDaoCountry?.addEventListener('blur', () => {
-  inputMaDaoCountry.value = normalizeMaDaoCountry(inputMaDaoCountry.value);
+selectMaDaoRoutingPlanId?.addEventListener('change', () => {
   updateHeroSmsPlatformDisplay();
+  markSettingsDirty(true);
   saveSettings({ silent: true }).catch(() => { });
+});
+
+btnMaDaoRefreshRoutingPlans?.addEventListener('click', () => {
+  loadMaDaoRoutingPlans().catch((error) => {
+    showToast(`刷新 MaDao 路由计划失败：${error?.message || error}`, 'warn', 2200);
+  });
+});
+
+selectMaDaoProviderId?.addEventListener('change', () => {
+  maDaoCountryOptions = [];
+  maDaoOperatorOptions = [];
+  setMaDaoCountrySelectOptions('');
+  setMaDaoOperatorSelectOptions('');
+  syncLatestState({
+    madaoProviderId: normalizeMaDaoProviderIdValue(selectMaDaoProviderId.value),
+    madaoCountry: '',
+    madaoOperator: '',
+  });
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+  loadMaDaoCountries({ silent: true }).catch((error) => {
+    showToast(`刷新 MaDao 国家失败：${error?.message || error}`, 'warn', 2200);
+  });
+});
+
+btnMaDaoRefreshProviders?.addEventListener('click', () => {
+  loadMaDaoProviders().catch((error) => {
+    showToast(`刷新 MaDao 服务商失败：${error?.message || error}`, 'warn', 2200);
+  });
+});
+
+selectMaDaoCountry?.addEventListener('change', () => {
+  maDaoOperatorOptions = [];
+  setMaDaoOperatorSelectOptions('');
+  updateHeroSmsPlatformDisplay();
+  syncLatestState({
+    madaoCountry: normalizeMaDaoCountry(selectMaDaoCountry.value),
+    madaoOperator: '',
+  });
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+  loadMaDaoOperators({ silent: true }).catch((error) => {
+    showToast(`刷新 MaDao 线路失败：${error?.message || error}`, 'warn', 2200);
+  });
+});
+
+btnMaDaoRefreshCountries?.addEventListener('click', () => {
+  loadMaDaoCountries().catch((error) => {
+    showToast(`刷新 MaDao 国家失败：${error?.message || error}`, 'warn', 2200);
+  });
+});
+
+selectMaDaoOperator?.addEventListener('change', () => {
+  updateHeroSmsPlatformDisplay();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+});
+
+btnMaDaoRefreshOperators?.addEventListener('click', () => {
+  loadMaDaoOperators().catch((error) => {
+    showToast(`刷新 MaDao 线路失败：${error?.message || error}`, 'warn', 2200);
+  });
 });
 
 inputMaDaoAutoPickCountry?.addEventListener('change', () => {
@@ -18597,14 +19231,17 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         selectMaDaoMode.value = normalizeMaDaoModeValue(message.payload.madaoMode);
         updatePhoneVerificationSettingsUI();
       }
-      if (message.payload.madaoRoutingPlanId !== undefined && inputMaDaoRoutingPlanId) {
-        inputMaDaoRoutingPlanId.value = normalizeMaDaoIdentifierValue(message.payload.madaoRoutingPlanId);
+      if (message.payload.madaoRoutingPlanId !== undefined && selectMaDaoRoutingPlanId) {
+        setMaDaoRoutingPlanSelectOptions(message.payload.madaoRoutingPlanId);
       }
-      if (message.payload.madaoProviderId !== undefined && inputMaDaoProviderId) {
-        inputMaDaoProviderId.value = normalizeMaDaoProviderIdValue(message.payload.madaoProviderId);
+      if (message.payload.madaoProviderId !== undefined && selectMaDaoProviderId) {
+        setMaDaoProviderSelectOptions(message.payload.madaoProviderId);
       }
-      if (message.payload.madaoCountry !== undefined && inputMaDaoCountry) {
-        inputMaDaoCountry.value = normalizeMaDaoCountry(message.payload.madaoCountry);
+      if (message.payload.madaoCountry !== undefined && selectMaDaoCountry) {
+        setMaDaoCountrySelectOptions(message.payload.madaoCountry);
+      }
+      if (message.payload.madaoOperator !== undefined && selectMaDaoOperator) {
+        setMaDaoOperatorSelectOptions(message.payload.madaoOperator);
       }
       if (message.payload.madaoAutoPickCountry !== undefined && inputMaDaoAutoPickCountry) {
         inputMaDaoAutoPickCountry.checked = Boolean(message.payload.madaoAutoPickCountry);
