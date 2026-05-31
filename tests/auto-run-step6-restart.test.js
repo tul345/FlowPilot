@@ -276,7 +276,7 @@ const AUTO_RUN_TIMER_PARKED_ERROR_PREFIX = 'AUTO_RUN_TIMER_PARKED::';
 const AUTO_RUN_TIMER_KIND_BEFORE_RETRY = 'before_retry';
 const EMAIL_SIGNUP_PHONE_VERIFICATION_RESTART_MAX_ATTEMPTS = 5;
 const GPC_CHECKOUT_RESTART_COOLDOWN_TRIGGER_COUNT = 3;
-const GPC_CHECKOUT_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
+const GPC_CHECKOUT_RESTART_COOLDOWN_MS = 30 * 1000;
 const LOG_PREFIX = '[test]';
 const chrome = {
   tabs: {
@@ -1170,8 +1170,8 @@ test('auto-run parks current attempt for five minutes after every third GPC chec
   assert.equal(events.timerPlans.length, 1);
   assert.equal(events.timerPlans[0].plan.kind, 'before_retry');
   assert.equal(events.timerPlans[0].plan.mode, 'continue');
-  assert.ok(/5 分钟后继续/.test(events.timerPlans[0].plan.countdownNote));
-  assert.ok(events.logs.some(({ message }) => /已进入 5 分钟冷却/.test(message)));
+  assert.ok(/30 秒后继续/.test(events.timerPlans[0].plan.countdownNote));
+  assert.ok(events.logs.some(({ message }) => /已进入 30 秒冷却/.test(message)));
 });
 
 test('auto-run preserves GPC checkout rebuild count across continue resume before triggering cooldown', async () => {

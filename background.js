@@ -633,7 +633,7 @@ const IP_PROXY_AUTO_SYNC_DEFAULT_INTERVAL_MINUTES = 15;
 const AUTO_RUN_RETRY_DELAY_MS = 3000;
 const AUTO_RUN_MAX_RETRIES_PER_ROUND = 3;
 const GPC_CHECKOUT_RESTART_COOLDOWN_TRIGGER_COUNT = 3;
-const GPC_CHECKOUT_RESTART_COOLDOWN_MS = 5 * 60 * 1000;
+const GPC_CHECKOUT_RESTART_COOLDOWN_MS = 30 * 1000;
 const AUTO_STEP_DELAY_MIN_ALLOWED_SECONDS = 0;
 const AUTO_STEP_DELAY_MAX_ALLOWED_SECONDS = 600;
 const VERIFICATION_RESEND_COUNT_MIN = 0;
@@ -13245,7 +13245,7 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
           ? latestStateForPlan.autoRunRoundSummaries
           : [],
         countdownTitle: countdownTitle || 'GPC 冷却中',
-        countdownNote: countdownNote || `第 ${currentRun}/${totalRunsForPlan} 轮第 ${attemptRunForPlan} 次尝试将在 5 分钟后继续`,
+        countdownNote: countdownNote || `第 ${currentRun}/${totalRunsForPlan} 轮第 ${attemptRunForPlan} 次尝试将在 30 秒后继续`,
       }, extraState);
     }
     if (logMessage) {
@@ -13532,8 +13532,8 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
             totalRunsForPlan: totalRuns,
             attemptRunForPlan: attemptRuns,
             countdownTitle: 'GPC 冷却中',
-            countdownNote: `第 ${targetRun}/${totalRuns} 轮第 ${attemptRuns} 次尝试将在 5 分钟后继续回到 plus-checkout-create`,
-            logMessage: `GPC 第 ${checkoutRestartCount} 次回到 plus-checkout-create 后仍未恢复，已进入 5 分钟冷却，稍后继续当前尝试。`,
+            countdownNote: `第 ${targetRun}/${totalRuns} 轮第 ${attemptRuns} 次尝试将在 30 秒后继续回到 plus-checkout-create`,
+            logMessage: `GPC 第 ${checkoutRestartCount} 次回到 plus-checkout-create 后仍未恢复，已进入 30 秒冷却，稍后继续当前尝试。`,
           });
         }
         nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
