@@ -44,6 +44,9 @@ test('sidepanel html exposes flow selector and kiro source fields', () => {
     '<option value="grok">Grok</option>',
     'id="label-source-selector"',
     'id="btn-open-target-repository"',
+    'id="row-account-delivery-mode"',
+    'id="select-account-delivery-mode"',
+    'id="account-delivery-mode-caption"',
     'id="row-step6-cookie-settings"',
     'id="row-shared-auto-run"',
     'id="row-auto-run-thread-interval"',
@@ -57,19 +60,32 @@ test('sidepanel html exposes flow selector and kiro source fields', () => {
     'id="row-kiro-upload-status"',
     'id="row-grok-register-status"',
     'id="row-grok-sso-status"',
-    'id="row-grok-webchat2api-upload-status"',
-    'id="display-grok-webchat2api-upload-status"',
+    'id="row-grok-upload-status"',
+    'id="display-grok-upload-status"',
     'id="row-grok-sso-settings"',
     'id="btn-copy-grok-sso"',
     'id="btn-clear-grok-sso"',
+    'id="row-grok-sub2api-group"',
+    'id="input-grok-sub2api-group"',
+    'id="row-grok-sub2api-account-priority"',
+    'id="input-grok-sub2api-account-priority"',
+    'id="row-grok-sub2api-default-proxy"',
+    'id="input-grok-sub2api-default-proxy"',
     'id="row-openai-webchat-url"',
     'id="input-openai-webchat-url"',
     'id="row-openai-webchat-key"',
     'id="input-openai-webchat-key"',
     'id="row-openai-webchat-upload-status"',
     'id="display-openai-webchat-upload-status"',
+    'id="row-openai-chatgpt2api-url"',
+    'id="input-openai-chatgpt2api-url"',
+    'id="row-openai-chatgpt2api-key"',
+    'id="input-openai-chatgpt2api-key"',
+    'id="row-openai-chatgpt2api-upload-status"',
+    'id="display-openai-chatgpt2api-upload-status"',
     '<script src="../flows/grok/index.js"></script>',
     '<script src="../flows/grok/workflow.js"></script>',
+    '<script src="account-delivery-control.js"></script>',
   ].forEach((snippet) => {
     assert.match(visibleHtml, new RegExp(snippet.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   });
@@ -77,6 +93,10 @@ test('sidepanel html exposes flow selector and kiro source fields', () => {
   assert.doesNotMatch(visibleHtml, /id="input-openai-webchat-upload-enabled"/);
   assert.doesNotMatch(visibleHtml, /id="display-openai-webchat-upload-hint"/);
   assert.doesNotMatch(sidepanelHtml, /id="btn-export-grok-sso"/);
+  assert.doesNotMatch(sidepanelHtml, /id="row-grok-webchat2api-upload-status"/);
+  assert.doesNotMatch(sidepanelHtml, /row-plus-account-access-strategy/);
+  assert.doesNotMatch(sidepanelHtml, /select-plus-account-access-strategy/);
+  assert.doesNotMatch(sidepanelHtml, /plus-account-access-strategy-caption/);
   assert.match(
     sidepanelHtml,
     /id="btn-open-target-repository"[^>]*class="btn btn-outline btn-sm data-inline-btn"[^>]*>GitHub<\/button>/
@@ -91,6 +111,283 @@ test('sidepanel html exposes flow selector and kiro source fields', () => {
     sidepanelHtml.indexOf('<script src="../flows/grok/workflow.js"></script>')
       < sidepanelHtml.indexOf('<script src="../flows/index.js"></script>')
   );
+  assert.ok(
+    sidepanelHtml.indexOf('id="row-source-selector"')
+      < sidepanelHtml.indexOf('id="row-account-delivery-mode"')
+  );
+  assert.ok(
+    sidepanelHtml.indexOf('id="row-account-delivery-mode"')
+      < sidepanelHtml.indexOf('id="contribution-mode-panel"')
+  );
+  assert.ok(
+    sidepanelHtml.indexOf('<script src="account-delivery-control.js"></script>')
+      < sidepanelHtml.indexOf('<script src="sidepanel.js"></script>')
+  );
+});
+
+test('sidepanel workflow builders pass account delivery mode and route together', () => {
+  const bundle = [
+    extractFunction(sidepanelSource, 'getStepDefinitionsForMode'),
+    extractFunction(sidepanelSource, 'getWorkflowNodesForMode'),
+  ].join('\n');
+
+  const api = new Function(`
+const calls = [];
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const DEFAULT_PLUS_PAYMENT_METHOD = 'paypal';
+const DEFAULT_SIGNUP_METHOD = 'email';
+let currentPlusPaymentMethod = 'paypal';
+let currentAccountDeliveryMode = 'oauth';
+let currentAccountDeliveryRouteId = 'oauth';
+let currentSignupMethod = 'email';
+let currentPhoneSignupReloginAfterBindEmailEnabled = false;
+let latestState = {};
+const inputPhoneVerificationEnabled = null;
+function normalizePlusPaymentMethod(value) { return value; }
+function normalizeAccountDeliveryMode(value, fallback = 'oauth') { return value || fallback; }
+function normalizeSignupMethod(value) { return value; }
+const window = {
+  MultiPageStepDefinitions: {
+    getSteps(options) {
+      calls.push({ kind: 'steps', options });
+      return [{ id: 1, key: 'register', order: 1 }];
+    },
+    getNodes(options) {
+      calls.push({ kind: 'nodes', options });
+      return [{ nodeId: 'register', displayOrder: 1 }];
+    },
+  },
+};
+${bundle}
+return { calls, getStepDefinitionsForMode, getWorkflowNodesForMode };
+`)();
+
+  const options = {
+    activeFlowId: 'openai',
+    targetId: 'sub2api',
+    accountDeliveryMode: 'agent_identity',
+    accountDeliveryRouteId: 'sub2api-agent-identity',
+  };
+  api.getStepDefinitionsForMode(false, options);
+  api.getWorkflowNodesForMode(false, options);
+
+  assert.deepEqual(
+    api.calls.map(({ kind, options: callOptions }) => ({
+      kind,
+      accountDeliveryMode: callOptions.accountDeliveryMode,
+      accountDeliveryRouteId: callOptions.accountDeliveryRouteId,
+      targetId: callOptions.targetId,
+    })),
+    [
+      {
+        kind: 'steps',
+        accountDeliveryMode: 'agent_identity',
+        accountDeliveryRouteId: 'sub2api-agent-identity',
+        targetId: 'sub2api',
+      },
+      {
+        kind: 'nodes',
+        accountDeliveryMode: 'agent_identity',
+        accountDeliveryRouteId: 'sub2api-agent-identity',
+        targetId: 'sub2api',
+      },
+    ]
+  );
+});
+
+test('account delivery state patches update one target without changing the current selection', () => {
+  const bundle = extractFunction(sidepanelSource, 'buildAccountDeliveryStatePatch');
+  const api = new Function(`
+function normalizeAccountDeliveryMode(value, fallback = 'oauth') {
+  return ['oauth', 'session', 'agent_identity'].includes(value) ? value : fallback;
+}
+${bundle}
+return { buildAccountDeliveryStatePatch };
+`)();
+  const state = {
+    activeFlowId: 'openai',
+    targetId: 'sub2api',
+    accountDeliveryMode: 'agent_identity',
+    settingsState: {
+      activeFlowId: 'openai',
+      flows: {
+        openai: {
+          selectedTargetId: 'sub2api',
+          targets: {
+            cpa: { accountDeliveryMode: 'oauth' },
+            sub2api: { accountDeliveryMode: 'agent_identity' },
+          },
+        },
+      },
+    },
+  };
+
+  const patch = api.buildAccountDeliveryStatePatch(state, 'cpa', 'session', 'sub2api');
+
+  assert.equal(patch.targetId, 'sub2api');
+  assert.equal(patch.accountDeliveryMode, 'agent_identity');
+  assert.equal(patch.settingsState.flows.openai.selectedTargetId, 'sub2api');
+  assert.equal(patch.settingsState.flows.openai.targets.cpa.accountDeliveryMode, 'session');
+  assert.equal(state.settingsState.flows.openai.targets.cpa.accountDeliveryMode, 'oauth');
+});
+
+test('account delivery save keeps the event target after the selector changes', async () => {
+  const bundle = [
+    extractFunction(sidepanelSource, 'buildAccountDeliveryStatePatch'),
+    extractFunction(sidepanelSource, 'saveAccountDeliveryModeSelection'),
+  ].join('\n');
+  const messages = [];
+  const api = new Function('messages', `
+let latestState = {
+  activeFlowId: 'openai',
+  targetId: 'sub2api',
+  accountDeliveryMode: 'agent_identity',
+  settingsState: {
+    activeFlowId: 'openai',
+    flows: {
+      openai: {
+        selectedTargetId: 'sub2api',
+        targets: {
+          cpa: { accountDeliveryMode: 'oauth' },
+          sub2api: { accountDeliveryMode: 'agent_identity' },
+        },
+      },
+    },
+  },
+};
+function normalizeAccountDeliveryMode(value, fallback = 'oauth') {
+  return ['oauth', 'session', 'agent_identity'].includes(value) ? value : fallback;
+}
+function normalizeTargetIdForFlow(flowId, targetId) { return String(targetId || '').trim().toLowerCase(); }
+function getSelectedFlowId() { return 'openai'; }
+function getSelectedTargetId() { return 'sub2api'; }
+function resolveCurrentSidepanelCapabilities(options) {
+  return {
+    canEditAccountDeliveryMode: true,
+    effectiveAccountDeliveryMode: options.accountDeliveryMode,
+    effectiveAccountDeliveryRouteId: options.accountDeliveryMode === 'session' ? 'cpa-session' : 'oauth',
+    effectiveTargetId: options.targetId,
+  };
+}
+function syncLatestState(patch) { latestState = { ...latestState, ...patch }; }
+function syncStepDefinitionsFromUiState() {}
+function updatePanelModeUI() {}
+const chrome = {
+  runtime: {
+    async sendMessage(message) {
+      messages.push(message);
+      return {
+        state: {
+          ...latestState,
+          targetId: 'cpa',
+          accountDeliveryMode: 'session',
+          settingsState: {
+            ...latestState.settingsState,
+            flows: {
+              ...latestState.settingsState.flows,
+              openai: {
+                ...latestState.settingsState.flows.openai,
+                selectedTargetId: 'cpa',
+                targets: {
+                  ...latestState.settingsState.flows.openai.targets,
+                  cpa: { accountDeliveryMode: 'session' },
+                },
+              },
+            },
+          },
+        },
+      };
+    },
+  },
+};
+${bundle}
+return {
+  saveAccountDeliveryModeSelection,
+  getLatestState: () => latestState,
+};
+`)(messages);
+
+  await api.saveAccountDeliveryModeSelection({
+    targetId: 'cpa',
+    accountDeliveryMode: 'session',
+  });
+
+  assert.deepEqual(messages, [{
+    type: 'SAVE_SETTING',
+    source: 'sidepanel',
+    payload: {
+      activeFlowId: 'openai',
+      targetId: 'cpa',
+      accountDeliveryMode: 'session',
+    },
+  }]);
+  assert.equal(api.getLatestState().targetId, 'sub2api');
+  assert.equal(api.getLatestState().accountDeliveryMode, 'agent_identity');
+  assert.equal(
+    api.getLatestState().settingsState.flows.openai.targets.cpa.accountDeliveryMode,
+    'session'
+  );
+});
+
+test('stale account delivery updates preserve the target currently shown in the selector', () => {
+  const bundle = [
+    extractFunction(sidepanelSource, 'buildAccountDeliveryStatePatch'),
+    extractFunction(sidepanelSource, 'reconcileAccountDeliveryDataUpdate'),
+  ].join('\n');
+  const api = new Function(`
+function normalizeAccountDeliveryMode(value, fallback = 'oauth') {
+  return ['oauth', 'session', 'agent_identity'].includes(value) ? value : fallback;
+}
+${bundle}
+return { reconcileAccountDeliveryDataUpdate };
+`)();
+  const currentState = {
+    activeFlowId: 'openai',
+    targetId: 'sub2api',
+    accountDeliveryMode: 'agent_identity',
+    settingsState: {
+      activeFlowId: 'openai',
+      flows: {
+        openai: {
+          selectedTargetId: 'sub2api',
+          targets: {
+            cpa: { accountDeliveryMode: 'oauth' },
+            sub2api: { accountDeliveryMode: 'agent_identity' },
+          },
+        },
+      },
+    },
+  };
+  const payload = {
+    activeFlowId: 'openai',
+    targetId: 'cpa',
+    accountDeliveryMode: 'session',
+    settingsState: {
+      activeFlowId: 'openai',
+      flows: {
+        openai: {
+          selectedTargetId: 'cpa',
+          targets: {
+            cpa: { accountDeliveryMode: 'session' },
+            sub2api: { accountDeliveryMode: 'agent_identity' },
+          },
+        },
+      },
+    },
+  };
+
+  const reconciled = api.reconcileAccountDeliveryDataUpdate(
+    payload,
+    currentState,
+    'openai',
+    'sub2api'
+  );
+
+  assert.equal(reconciled.targetId, 'sub2api');
+  assert.equal(reconciled.accountDeliveryMode, 'agent_identity');
+  assert.equal(reconciled.settingsState.flows.openai.selectedTargetId, 'sub2api');
+  assert.equal(reconciled.settingsState.flows.openai.targets.cpa.accountDeliveryMode, 'session');
+  assert.equal(payload.settingsState.flows.openai.selectedTargetId, 'cpa');
 });
 
 test('sidepanel Grok SSO clear action goes through background message instead of direct storage writes', () => {
@@ -106,12 +403,12 @@ test('sidepanel Grok SSO clear action goes through background message instead of
   assert.doesNotMatch(block, /storage\.local\.set/);
 });
 
-test('sidepanel renders Grok SSO status from canonical runtime state', () => {
+test('sidepanel renders target-aware Grok publish status from canonical runtime state', () => {
   const bundle = [
     extractFunction(sidepanelSource, 'getGrokRuntimeState'),
     extractFunction(sidepanelSource, 'normalizeGrokSsoCookies'),
     extractFunction(sidepanelSource, 'getGrokRegisterStatusLabel'),
-    extractFunction(sidepanelSource, 'getGrokWebchat2ApiUploadStatusLabel'),
+    extractFunction(sidepanelSource, 'getGrokUploadStatusLabel'),
     extractFunction(sidepanelSource, 'renderGrokRuntimeState'),
   ].join('\n');
 
@@ -120,7 +417,7 @@ let latestState = {};
 const displayGrokRegisterStatus = { textContent: '' };
 const displayGrokSsoStatus = { textContent: '' };
 const displayGrokSsoCookie = { textContent: '', title: '' };
-const displayGrokWebchat2ApiUploadStatus = { textContent: '', title: '' };
+const displayGrokUploadStatus = { textContent: '', title: '' };
 const buttons = [];
 const btnCopyGrokSso = { disabled: false };
 const btnClearGrokSso = { disabled: false };
@@ -129,7 +426,7 @@ return {
   displayGrokRegisterStatus,
   displayGrokSsoStatus,
   displayGrokSsoCookie,
-  displayGrokWebchat2ApiUploadStatus,
+  displayGrokUploadStatus,
   btnCopyGrokSso,
   btnClearGrokSso,
   renderGrokRuntimeState,
@@ -147,6 +444,7 @@ return {
             extractedAt: 0,
           },
           upload: {
+            targetId: 'webchat2api',
             status: 'uploaded',
             uploadedAt: 0,
             message: '上传成功',
@@ -160,18 +458,37 @@ return {
   assert.equal(api.displayGrokRegisterStatus.textContent, '已完成');
   assert.match(api.displayGrokSsoStatus.textContent, /^已提取 2 条/);
   assert.equal(api.displayGrokSsoCookie.textContent, '12345678...abcdef');
-  assert.equal(api.displayGrokWebchat2ApiUploadStatus.textContent, '已上传：上传成功');
-  assert.equal(api.displayGrokWebchat2ApiUploadStatus.title, 'https://remote.example.com/api/remote-account/inject');
+  assert.equal(api.displayGrokUploadStatus.textContent, '已上传：上传成功');
+  assert.equal(api.displayGrokUploadStatus.title, 'https://remote.example.com/api/remote-account/inject');
   assert.equal(api.btnCopyGrokSso.disabled, false);
   assert.equal(api.btnClearGrokSso.disabled, false);
+
+  api.renderGrokRuntimeState({
+    runtimeState: {
+      flowState: {
+        grok: {
+          upload: {
+            targetId: 'sub2api',
+            status: 'creating',
+            message: '',
+            targetUrl: 'https://sub.example.com/api/v1/admin/grok/oauth/create-from-oauth',
+          },
+        },
+      },
+    },
+  });
+  assert.equal(api.displayGrokUploadStatus.textContent, '正在创建');
+  assert.equal(api.displayGrokUploadStatus.title, 'https://sub.example.com/api/v1/admin/grok/oauth/create-from-oauth');
 });
 
 test('sidepanel project repository button resolves the configured target repositories', () => {
   assert.match(sidepanelSource, /cpa:\s*'https:\/\/github\.com\/router-for-me\/CLIProxyAPI'/);
   assert.match(sidepanelSource, /sub2api:\s*'https:\/\/github\.com\/Wei-Shaw\/sub2api'/);
   assert.match(sidepanelSource, /webchat:\s*'https:\/\/github\.com\/zqbxdev\/webchat2api'/);
+  assert.match(sidepanelSource, /chatgpt2api:\s*'https:\/\/github\.com\/basketikun\/chatgpt2api'/);
   assert.match(sidepanelSource, /'kiro-rs':\s*'https:\/\/github\.com\/QLHazyCoder\/kiro\.rs'/);
   assert.match(sidepanelSource, /webchat2api:\s*'https:\/\/github\.com\/zqbxdev\/webchat2api'/);
+  assert.match(sidepanelSource, /grok:[\s\S]*sub2api:\s*'https:\/\/github\.com\/Wei-Shaw\/sub2api'/);
   assert.doesNotMatch(sidepanelSource, /github\.com\/hank9999\/kiro\.rs/);
   assert.match(sidepanelSource, /btnOpenTargetRepository\?\.addEventListener\('click'/);
 });
@@ -187,12 +504,14 @@ const TARGET_REPOSITORY_URLS = Object.freeze({
     cpa: 'https://github.com/router-for-me/CLIProxyAPI',
     sub2api: 'https://github.com/Wei-Shaw/sub2api',
     webchat: 'https://github.com/zqbxdev/webchat2api',
+    chatgpt2api: 'https://github.com/basketikun/chatgpt2api',
   }),
   kiro: Object.freeze({
     'kiro-rs': 'https://github.com/QLHazyCoder/kiro.rs',
   }),
   grok: Object.freeze({
     webchat2api: 'https://github.com/zqbxdev/webchat2api',
+    sub2api: 'https://github.com/Wei-Shaw/sub2api',
   }),
 });
 function normalizeFlowId(value) {
@@ -203,9 +522,9 @@ function getDefaultTargetIdForFlow(flowId) {
 }
 function normalizeTargetIdForFlow(flowId, targetId, fallback) {
   const targets = {
-    openai: ['cpa', 'sub2api', 'codex2api', 'webchat'],
+    openai: ['cpa', 'sub2api', 'codex2api', 'webchat', 'chatgpt2api'],
     kiro: ['kiro-rs'],
-    grok: ['webchat2api'],
+    grok: ['webchat2api', 'sub2api'],
   }[flowId] || [];
   return targets.includes(targetId) ? targetId : fallback;
 }
@@ -218,7 +537,9 @@ return { getTargetRepositoryUrl };
   assert.equal(api.getTargetRepositoryUrl('openai', 'cpa'), 'https://github.com/router-for-me/CLIProxyAPI');
   assert.equal(api.getTargetRepositoryUrl('openai', 'sub2api'), 'https://github.com/Wei-Shaw/sub2api');
   assert.equal(api.getTargetRepositoryUrl('openai', 'webchat'), 'https://github.com/zqbxdev/webchat2api');
+  assert.equal(api.getTargetRepositoryUrl('openai', 'chatgpt2api'), 'https://github.com/basketikun/chatgpt2api');
   assert.equal(api.getTargetRepositoryUrl('grok', 'webchat2api'), 'https://github.com/zqbxdev/webchat2api');
+  assert.equal(api.getTargetRepositoryUrl('grok', 'sub2api'), 'https://github.com/Wei-Shaw/sub2api');
   assert.equal(api.getTargetRepositoryUrl('openai', 'codex2api'), '');
 });
 
@@ -226,6 +547,7 @@ test('sidepanel step definitions rerender when active flow changes even if plus/
   const bundle = [
     extractFunction(sidepanelSource, 'normalizeSignupMethod'),
     extractFunction(sidepanelSource, 'normalizePlusPaymentMethod'),
+    extractFunction(sidepanelSource, 'normalizeAccountDeliveryMode'),
     extractFunction(sidepanelSource, 'getStepDefinitionsForMode'),
     extractFunction(sidepanelSource, 'rebuildStepDefinitionState'),
     extractFunction(sidepanelSource, 'syncStepDefinitionsForMode'),
@@ -244,26 +566,24 @@ const window = {
 let latestState = { activeFlowId: 'openai' };
 let currentPlusModeEnabled = false;
 let currentPlusPaymentMethod = 'paypal';
-let currentPlusAccountAccessStrategy = 'oauth';
+let currentAccountDeliveryMode = 'oauth';
+let currentAccountDeliveryRouteId = 'oauth';
 let currentSignupMethod = 'email';
 let currentPhoneVerificationEnabled = false;
 let currentPhoneSignupReloginAfterBindEmailEnabled = false;
 let currentStepDefinitionFlowId = 'openai';
 let currentStepDefinitionTargetId = 'cpa';
 let currentStepDefinitionOpenAiWebchatUploadEnabled = false;
+let currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled = false;
 const DEFAULT_ACTIVE_FLOW_ID = 'openai';
 const DEFAULT_SIGNUP_METHOD = 'email';
-const DEFAULT_PLUS_PAYMENT_METHOD = 'gpc-helper';
-const DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY = 'oauth';
+const DEFAULT_PLUS_PAYMENT_METHOD = 'paypal';
 let stepDefinitions = [{ id: 6, key: 'openai' }];
 let STEP_IDS = [6];
 let STEP_DEFAULT_STATUSES = { 6: 'pending' };
 let SKIPPABLE_STEPS = new Set([6]);
 function renderStepsList() {
   calls.push({ type: 'render', stepIds: [...STEP_IDS] });
-}
-function normalizePlusAccountAccessStrategy(value = '') {
-  return String(value || DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY).trim().toLowerCase() || DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY;
 }
 ${bundle}
 return {
@@ -288,10 +608,12 @@ return {
     options: {
       activeFlowId: 'kiro',
       targetId: undefined,
+      accountDeliveryMode: 'oauth',
+      accountDeliveryRouteId: 'oauth',
       plusModeEnabled: false,
       plusPaymentMethod: 'paypal',
-      plusAccountAccessStrategy: 'oauth',
       openaiWebchatUploadEnabled: false,
+      grokSub2apiGrok2ApiUploadEnabled: false,
       settingsState: undefined,
       signupMethod: 'email',
       phoneVerificationEnabled: false,
@@ -306,6 +628,7 @@ test('sidepanel step definitions rerender when OpenAI target changes to webchat'
   const bundle = [
     extractFunction(sidepanelSource, 'normalizeSignupMethod'),
     extractFunction(sidepanelSource, 'normalizePlusPaymentMethod'),
+    extractFunction(sidepanelSource, 'normalizeAccountDeliveryMode'),
     extractFunction(sidepanelSource, 'getStepDefinitionsForMode'),
     extractFunction(sidepanelSource, 'rebuildStepDefinitionState'),
     extractFunction(sidepanelSource, 'syncStepDefinitionsForMode'),
@@ -326,26 +649,24 @@ const window = {
 let latestState = { activeFlowId: 'openai', targetId: 'cpa' };
 let currentPlusModeEnabled = false;
 let currentPlusPaymentMethod = 'paypal';
-let currentPlusAccountAccessStrategy = 'oauth';
+let currentAccountDeliveryMode = 'oauth';
+let currentAccountDeliveryRouteId = 'oauth';
 let currentSignupMethod = 'email';
 let currentPhoneVerificationEnabled = false;
 let currentPhoneSignupReloginAfterBindEmailEnabled = false;
 let currentStepDefinitionFlowId = 'openai';
 let currentStepDefinitionTargetId = 'cpa';
 let currentStepDefinitionOpenAiWebchatUploadEnabled = false;
+let currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled = false;
 const DEFAULT_ACTIVE_FLOW_ID = 'openai';
 const DEFAULT_SIGNUP_METHOD = 'email';
-const DEFAULT_PLUS_PAYMENT_METHOD = 'gpc-helper';
-const DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY = 'oauth';
+const DEFAULT_PLUS_PAYMENT_METHOD = 'paypal';
 let stepDefinitions = [{ id: 6, key: 'platform-verify' }];
 let STEP_IDS = [6];
 let STEP_DEFAULT_STATUSES = { 6: 'pending' };
 let SKIPPABLE_STEPS = new Set([6]);
 function renderStepsList() {
   calls.push({ type: 'render', stepIds: [...STEP_IDS] });
-}
-function normalizePlusAccountAccessStrategy(value = '') {
-  return String(value || DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY).trim().toLowerCase() || DEFAULT_PLUS_ACCOUNT_ACCESS_STRATEGY;
 }
 ${bundle}
 return {
@@ -372,6 +693,72 @@ return {
   assert.equal(api.calls.at(-2).options.openaiWebchatUploadEnabled, true);
 });
 
+test('sidepanel step definitions rerender when Grok SUB2API dual publishing changes', () => {
+  const bundle = [
+    extractFunction(sidepanelSource, 'normalizeSignupMethod'),
+    extractFunction(sidepanelSource, 'normalizePlusPaymentMethod'),
+    extractFunction(sidepanelSource, 'normalizeAccountDeliveryMode'),
+    extractFunction(sidepanelSource, 'getStepDefinitionsForMode'),
+    extractFunction(sidepanelSource, 'rebuildStepDefinitionState'),
+    extractFunction(sidepanelSource, 'syncStepDefinitionsForMode'),
+  ].join('\n');
+
+  const api = new Function(`
+const calls = [];
+const window = {
+  MultiPageStepDefinitions: {
+    getSteps(options) {
+      calls.push({ type: 'getSteps', options });
+      return Array.from(
+        { length: options.grokSub2apiGrok2ApiUploadEnabled ? 8 : 6 },
+        (_, index) => ({ id: index + 1, order: index + 1, key: 'grok-' + (index + 1) })
+      );
+    },
+  },
+};
+let latestState = { activeFlowId: 'grok', targetId: 'sub2api' };
+let currentPlusModeEnabled = false;
+let currentPlusPaymentMethod = 'paypal';
+let currentAccountDeliveryMode = 'oauth';
+let currentAccountDeliveryRouteId = 'oauth';
+let currentSignupMethod = 'email';
+let currentPhoneVerificationEnabled = false;
+let currentPhoneSignupReloginAfterBindEmailEnabled = false;
+let currentStepDefinitionFlowId = 'grok';
+let currentStepDefinitionTargetId = 'sub2api';
+let currentStepDefinitionOpenAiWebchatUploadEnabled = false;
+let currentStepDefinitionGrokSub2apiGrok2ApiUploadEnabled = false;
+const DEFAULT_ACTIVE_FLOW_ID = 'openai';
+const DEFAULT_SIGNUP_METHOD = 'email';
+const DEFAULT_PLUS_PAYMENT_METHOD = 'paypal';
+let stepDefinitions = Array.from({ length: 6 }, (_, index) => ({ id: index + 1, key: 'grok-' + (index + 1) }));
+let STEP_IDS = stepDefinitions.map((step) => step.id);
+let STEP_DEFAULT_STATUSES = Object.fromEntries(STEP_IDS.map((stepId) => [stepId, 'pending']));
+let SKIPPABLE_STEPS = new Set(STEP_IDS);
+function renderStepsList() {
+  calls.push({ type: 'render', stepIds: [...STEP_IDS] });
+}
+${bundle}
+return {
+  calls,
+  syncStepDefinitionsForMode,
+  getStepIds: () => [...STEP_IDS],
+};
+`)();
+
+  api.syncStepDefinitionsForMode(false, {
+    activeFlowId: 'grok',
+    targetId: 'sub2api',
+    plusPaymentMethod: 'paypal',
+    grokSub2apiGrok2ApiUploadEnabled: true,
+    signupMethod: 'email',
+  });
+
+  assert.deepEqual(api.getStepIds(), [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.equal(api.calls.at(-2).options.grokSub2apiGrok2ApiUploadEnabled, true);
+  assert.equal(api.calls.at(-1).type, 'render');
+});
+
 test('sidepanel OpenAI target normalization keeps registry-backed webchat source', () => {
   const bundle = [
     extractFunction(sidepanelSource, 'normalizePanelMode'),
@@ -392,7 +779,7 @@ function getFlowRegistry() {
     normalizeTargetId(flowId, targetId = '', fallback = '') {
       const normalizedFlowId = normalizeFlowId(flowId);
       const normalizedTargetId = String(targetId || '').trim().toLowerCase();
-      if (normalizedFlowId === 'openai' && ['cpa', 'sub2api', 'codex2api', 'webchat'].includes(normalizedTargetId)) {
+      if (normalizedFlowId === 'openai' && ['cpa', 'sub2api', 'codex2api', 'webchat', 'chatgpt2api'].includes(normalizedTargetId)) {
         return normalizedTargetId;
       }
       return String(fallback || '').trim().toLowerCase() || 'cpa';
@@ -404,7 +791,9 @@ return { normalizePanelMode, normalizeTargetIdForFlow };
 `)();
 
   assert.equal(api.normalizePanelMode('webchat'), 'webchat');
+  assert.equal(api.normalizePanelMode('chatgpt2api'), 'chatgpt2api');
   assert.equal(api.normalizeTargetIdForFlow('openai', 'webchat'), 'webchat');
+  assert.equal(api.normalizeTargetIdForFlow('openai', 'chatgpt2api'), 'chatgpt2api');
 });
 
 test('syncLatestState keeps activeFlowId and flowId in sync when only one side changes', () => {
@@ -504,7 +893,60 @@ return {
   assert.equal(api.inputGrokWebchat2ApiKey.value, 'shared-key');
 });
 
-test('updatePanelModeUI reapplies dynamic Plus and phone visibility after flow group visibility', () => {
+test('sidepanel keeps ChatGPT2API config independent from shared webchat inputs', () => {
+  const bundle = [
+    extractFunction(sidepanelSource, 'getOpenAiChatgpt2ApiUrlFromState'),
+    extractFunction(sidepanelSource, 'getOpenAiChatgpt2ApiAdminKeyFromState'),
+    extractFunction(sidepanelSource, 'buildOpenAiChatgpt2ApiConfigPatch'),
+    extractFunction(sidepanelSource, 'syncOpenAiChatgpt2ApiInputsFromState'),
+  ].join('\n');
+
+  const api = new Function(`
+let latestState = {};
+const inputOpenAiChatgpt2ApiUrl = { value: '' };
+const inputOpenAiChatgpt2ApiKey = { value: '' };
+${bundle}
+return {
+  inputOpenAiChatgpt2ApiUrl,
+  inputOpenAiChatgpt2ApiKey,
+  getOpenAiChatgpt2ApiUrlFromState,
+  getOpenAiChatgpt2ApiAdminKeyFromState,
+  buildOpenAiChatgpt2ApiConfigPatch,
+  syncOpenAiChatgpt2ApiInputsFromState,
+};
+`)();
+
+  const state = {
+    openaiWebchatUrl: 'https://shared.example.com/admin',
+    openaiWebchatAdminKey: 'shared-key',
+    settingsState: {
+      flows: {
+        openai: {
+          targets: {
+            chatgpt2api: {
+              baseUrl: 'https://nested-chatgpt2api.example.com/admin',
+              apiKey: 'nested-key',
+            },
+          },
+        },
+      },
+    },
+  };
+
+  assert.equal(api.getOpenAiChatgpt2ApiUrlFromState(state), 'https://nested-chatgpt2api.example.com/admin');
+  assert.equal(api.getOpenAiChatgpt2ApiAdminKeyFromState(state), 'nested-key');
+  assert.deepEqual(api.buildOpenAiChatgpt2ApiConfigPatch(' https://next-chatgpt2api.example.com/admin ', 'next-key'), {
+    openaiChatgpt2ApiUrl: 'https://next-chatgpt2api.example.com/admin',
+    openaiChatgpt2ApiAdminKey: 'next-key',
+  });
+
+  api.syncOpenAiChatgpt2ApiInputsFromState(state);
+
+  assert.equal(api.inputOpenAiChatgpt2ApiUrl.value, 'https://nested-chatgpt2api.example.com/admin');
+  assert.equal(api.inputOpenAiChatgpt2ApiKey.value, 'nested-key');
+});
+
+test('updatePanelModeUI reapplies account delivery, Plus, and phone visibility after flow group visibility', () => {
   const bundle = [
     extractFunction(sidepanelSource, 'updatePanelModeUI'),
   ].join('\n');
@@ -543,6 +985,9 @@ function applyFlowSettingsGroupVisibility(visibleGroupIds) {
 function updatePlusModeUI() {
   calls.push({ type: 'plus' });
 }
+function renderAccountDeliveryControl() {
+  calls.push({ type: 'delivery' });
+}
 function updatePhoneVerificationSettingsUI() {
   calls.push({ type: 'phone' });
 }
@@ -570,7 +1015,7 @@ return {
 
   assert.deepEqual(
     api.calls.map((entry) => entry.type),
-    ['render-flow', 'render-target', 'groups', 'plus', 'phone']
+    ['render-flow', 'render-target', 'groups', 'delivery', 'plus', 'phone']
   );
   assert.equal(api.selectFlow.value, 'openai');
   assert.equal(api.selectPanelMode.value, 'cpa');

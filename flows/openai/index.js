@@ -23,7 +23,7 @@
     "supportsEmailSignup": true,
     "supportsPhoneSignup": true,
     "supportsPhoneVerificationSettings": true,
-    "supportsPlusMode": true,
+    "supportsPlusMode": false,
     "supportsContributionMode": true,
     "supportsAccountContribution": true,
     "supportsOpenAiOAuthContribution": true,
@@ -36,7 +36,8 @@
       "cpa",
       "sub2api",
       "codex2api",
-      "webchat"
+      "webchat",
+      "chatgpt2api"
     ],
     "supportsLuckmail": true,
     "canSwitchFlow": true,
@@ -44,6 +45,7 @@
     "targetSelectorLabel": "来源"
   },
   "baseGroups": [
+    "openai-account-delivery",
     "openai-plus",
     "shared-auto-run",
     "openai-oauth",
@@ -105,6 +107,17 @@
       "groups": [
         "openai-target-webchat"
       ]
+    },
+    "chatgpt2api": {
+      "id": "chatgpt2api",
+      "label": "ChatGPT2API",
+      "defaultState": {
+        "baseUrl": "",
+        "apiKey": ""
+      },
+      "groups": [
+        "openai-target-chatgpt2api"
+      ]
     }
   },
   "settingsDefaults": {
@@ -115,8 +128,7 @@
     },
     "plus": {
       "plusModeEnabled": false,
-      "plusPaymentMethod": "plus-auto",
-      "plusAccountAccessStrategy": "oauth",
+      "plusPaymentMethod": "paypal",
       "hostedCheckoutVerificationUrl": "",
       "hostedCheckoutPhoneNumber": "",
       "plusHostedCheckoutOauthDelaySeconds": 3
@@ -177,6 +189,34 @@
       "family": "chatgpt-entry-family",
       "driverId": null,
       "cleanupScopes": [],
+      "detectionMatchers": [
+        {
+          "hostnames": [
+            "chatgpt.com",
+            "www.chatgpt.com",
+            "chat.openai.com"
+          ]
+        }
+      ],
+      "familyMatchers": [
+        {
+          "hostnames": [
+            "chatgpt.com",
+            "www.chatgpt.com",
+            "chat.openai.com"
+          ]
+        }
+      ]
+    },
+    "openai-session": {
+      "flowId": "openai",
+      "kind": "flow-page",
+      "label": "ChatGPT 会话",
+      "readyPolicy": "top-frame-only",
+      "family": "openai-session-family",
+      "driverId": "flows/openai/content/chatgpt-session",
+      "cleanupScopes": [],
+      "detectionPriority": 100,
       "detectionMatchers": [
         {
           "hostnames": [
@@ -284,6 +324,16 @@
       "cleanupScopes": [],
       "familyMatchers": []
     },
+    "openai-chatgpt2api": {
+      "flowId": "openai",
+      "kind": "remote-publisher",
+      "label": "ChatGPT2API",
+      "readyPolicy": "disabled",
+      "family": "openai-chatgpt2api-family",
+      "driverId": "flows/openai/background/publisher-chatgpt2api",
+      "cleanupScopes": [],
+      "familyMatchers": []
+    },
     "plus-checkout": {
       "flowId": "openai",
       "kind": "flow-page",
@@ -292,6 +342,17 @@
       "family": "plus-checkout-family",
       "driverId": "flows/openai/content/plus-checkout",
       "cleanupScopes": [],
+      "detectionPriority": 200,
+      "detectionMatchers": [
+        {
+          "hostnames": [
+            "chatgpt.com"
+          ],
+          "pathPrefixes": [
+            "/checkout/"
+          ]
+        }
+      ],
       "familyMatchers": [
         {
           "hostnames": [
@@ -368,6 +429,12 @@
         "plus-checkout-return"
       ]
     },
+    "flows/openai/content/chatgpt-session": {
+      "sourceId": "openai-session",
+      "commands": [
+        "OPENAI_SESSION_GET_CURRENT"
+      ]
+    },
     "flows/openai/content/paypal-flow": {
       "sourceId": "paypal-flow",
       "commands": [
@@ -383,10 +450,23 @@
       "commands": [
         "openai-upload-session-to-webchat"
       ]
+    },
+    "flows/openai/background/publisher-chatgpt2api": {
+      "sourceId": "openai-chatgpt2api",
+      "commands": [
+        "openai-upload-session-to-chatgpt2api"
+      ]
     }
   },
   "defaultTargetId": "cpa",
   "settingsGroups": {
+    "openai-account-delivery": {
+      "id": "openai-account-delivery",
+      "label": "账号交付",
+      "rowIds": [
+        "row-account-delivery-mode"
+      ]
+    },
     "openai-target-cpa": {
       "id": "openai-target-cpa",
       "label": "CPA 来源",
@@ -425,6 +505,15 @@
         "row-openai-webchat-upload-status"
       ]
     },
+    "openai-target-chatgpt2api": {
+      "id": "openai-target-chatgpt2api",
+      "label": "ChatGPT2API",
+      "rowIds": [
+        "row-openai-chatgpt2api-url",
+        "row-openai-chatgpt2api-key",
+        "row-openai-chatgpt2api-upload-status"
+      ]
+    },
     "openai-webchat-upload": {
       "id": "openai-webchat-upload",
       "label": "webchat",
@@ -435,7 +524,6 @@
       "label": "Plus",
       "rowIds": [
         "row-plus-mode",
-        "row-plus-account-access-strategy",
         "row-plus-payment-method"
       ]
     },
@@ -468,33 +556,65 @@
       "supportsPhoneSignup": true,
       "requiresPhoneSignupWarning": true,
       "usesOauthTimeoutBudget": true,
-      "supportedPlusAccountAccessStrategies": [
+      "supportedAccountDeliveryModes": [
         "oauth",
-        "cpa_codex_session"
-      ]
+        "session"
+      ],
+      "defaultAccountDeliveryMode": "oauth",
+      "accountDeliveryRouteByMode": {
+        "oauth": "oauth",
+        "session": "cpa-session"
+      }
     },
     "sub2api": {
       "supportsPhoneSignup": true,
       "requiresPhoneSignupWarning": false,
-      "supportedPlusAccountAccessStrategies": [
+      "supportedAccountDeliveryModes": [
         "oauth",
-        "sub2api_codex_session"
-      ]
+        "session",
+        "agent_identity"
+      ],
+      "defaultAccountDeliveryMode": "oauth",
+      "accountDeliveryRouteByMode": {
+        "oauth": "oauth",
+        "session": "sub2api-session",
+        "agent_identity": "sub2api-agent-identity"
+      }
     },
     "codex2api": {
       "supportsPhoneSignup": true,
       "requiresPhoneSignupWarning": false,
-      "supportedPlusAccountAccessStrategies": [
+      "supportedAccountDeliveryModes": [
         "oauth"
-      ]
+      ],
+      "defaultAccountDeliveryMode": "oauth",
+      "accountDeliveryRouteByMode": {
+        "oauth": "oauth"
+      }
     },
     "webchat": {
       "supportsPhoneSignup": false,
       "supportsPhoneVerificationSettings": false,
       "requiresPhoneSignupWarning": false,
-      "supportedPlusAccountAccessStrategies": [
-        "oauth"
-      ]
+      "supportedAccountDeliveryModes": [
+        "session"
+      ],
+      "defaultAccountDeliveryMode": "session",
+      "accountDeliveryRouteByMode": {
+        "session": "webchat-session"
+      }
+    },
+    "chatgpt2api": {
+      "supportsPhoneSignup": false,
+      "supportsPhoneVerificationSettings": false,
+      "requiresPhoneSignupWarning": false,
+      "supportedAccountDeliveryModes": [
+        "session"
+      ],
+      "defaultAccountDeliveryMode": "session",
+      "accountDeliveryRouteByMode": {
+        "session": "chatgpt2api-session"
+      }
     }
   }
 });

@@ -1,6 +1,7 @@
 // background.js — Service Worker: orchestration, state, tab management, message routing
 
 importScripts(
+  'flows/openai/account-delivery.js',
   'flows/openai/index.js',
   'flows/openai/workflow.js',
   'flows/kiro/index.js',
@@ -10,6 +11,8 @@ importScripts(
   'flows/index.js',
   'core/flow-kernel/flow-registry.js',
   'shared/contribution-registry.js',
+  'shared/i18n/catalog.js',
+  'shared/i18n/runtime.js',
   'core/flow-kernel/settings-schema.js',
   'imports/legacy/settings-importer.js',
   'core/flow-kernel/source-registry.js',
@@ -18,7 +21,6 @@ importScripts(
   'managed-alias-utils.js',
   'mail2925-utils.js',
   'paypal-utils.js',
-  'gpc-utils.js',
   'phone-sms/providers/hero-sms.js',
   'phone-sms/providers/five-sim.js',
   'phone-sms/providers/nexsms.js',
@@ -48,9 +50,13 @@ importScripts(
   'flows/kiro/background/desktop-authorize-runner.js',
   'flows/kiro/background/publisher-kiro-rs.js',
   'flows/grok/background/publisher-webchat2api.js',
+  'flows/grok/background/publisher-grok2api.js',
+  'flows/grok/background/sub2api-oauth-runner.js',
   'flows/openai/background/session-reader.js',
   'flows/openai/background/publisher-webchat.js',
+  'flows/openai/background/publisher-chatgpt2api.js',
   'background/email-local-part-helpers.js',
+  'background/duck-token-provider.js',
   'background/generated-email-helpers.js',
   'background/signup-flow-helpers.js',
   'background/mail-rule-registry.js',
@@ -78,6 +84,8 @@ importScripts(
   'flows/openai/background/steps/paypal-approve.js',
   'flows/openai/background/steps/plus-return-confirm.js',
   'flows/openai/background/steps/sub2api-session-import.js',
+  'flows/openai/background/agent-identity.js',
+  'flows/openai/background/steps/sub2api-agent-identity-import.js',
   'flows/openai/background/steps/cpa-session-import.js',
   'flows/openai/background/steps/oauth-login.js',
   'flows/openai/background/steps/fetch-login-code.js',
@@ -98,115 +106,18 @@ importScripts(
 );
 
 const DEFAULT_ACTIVE_FLOW_ID = 'openai';
-const PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH = 'oauth';
-const PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION = 'sub2api_codex_session';
-const PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION = 'cpa_codex_session';
-const NORMAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
+const getStepDefinitionsForOptions = (options = {}) => self.MultiPageStepDefinitions?.getSteps?.({
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: false,
+  ...options,
 }) || [];
-const NORMAL_PHONE_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: false,
-  signupMethod: 'phone',
-}) || NORMAL_STEP_DEFINITIONS;
-const NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
+const NORMAL_STEP_DEFINITIONS = getStepDefinitionsForOptions({ plusModeEnabled: false });
+const NORMAL_PHONE_STEP_DEFINITIONS = getStepDefinitionsForOptions({ plusModeEnabled: false, signupMethod: 'phone' });
+const NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = getStepDefinitionsForOptions({
   plusModeEnabled: false,
   signupMethod: 'phone',
   phoneSignupReloginAfterBindEmailEnabled: true,
-}) || NORMAL_PHONE_STEP_DEFINITIONS;
-const PLUS_PAYPAL_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal',
-}) || NORMAL_STEP_DEFINITIONS;
-const PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
-}) || PLUS_PAYPAL_STEP_DEFINITIONS;
-const PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
-}) || PLUS_PAYPAL_STEP_DEFINITIONS;
-const PLUS_PAYPAL_PHONE_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal',
-  signupMethod: 'phone',
-}) || PLUS_PAYPAL_STEP_DEFINITIONS;
-const PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal',
-  signupMethod: 'phone',
-  phoneSignupReloginAfterBindEmailEnabled: true,
-}) || PLUS_PAYPAL_PHONE_STEP_DEFINITIONS;
-const PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal-hosted',
-}) || PLUS_PAYPAL_STEP_DEFINITIONS;
-const PLUS_PAYPAL_HOSTED_CHECKOUT_SUB2API_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal-hosted',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
-}) || PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS;
-const PLUS_PAYPAL_HOSTED_CHECKOUT_CPA_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal-hosted',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
-}) || PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS;
-const PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal-hosted',
-  signupMethod: 'phone',
-}) || PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS;
-const PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'paypal-hosted',
-  signupMethod: 'phone',
-  phoneSignupReloginAfterBindEmailEnabled: true,
-}) || PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_STEP_DEFINITIONS;
-const PLUS_GPC_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'gpc-helper',
-}) || PLUS_PAYPAL_STEP_DEFINITIONS;
-const PLUS_GPC_SUB2API_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'gpc-helper',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION,
-}) || PLUS_GPC_STEP_DEFINITIONS;
-const PLUS_GPC_CPA_SESSION_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'gpc-helper',
-  plusAccountAccessStrategy: PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION,
-}) || PLUS_GPC_STEP_DEFINITIONS;
-const PLUS_GPC_PHONE_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'gpc-helper',
-  signupMethod: 'phone',
-}) || PLUS_GPC_STEP_DEFINITIONS;
-const PLUS_GPC_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS = self.MultiPageStepDefinitions?.getSteps?.({
-  activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
-  plusModeEnabled: true,
-  plusPaymentMethod: 'gpc-helper',
-  signupMethod: 'phone',
-  phoneSignupReloginAfterBindEmailEnabled: true,
-}) || PLUS_GPC_PHONE_STEP_DEFINITIONS;
-const PLUS_STEP_DEFINITIONS = PLUS_PAYPAL_STEP_DEFINITIONS;
+});
+const PLUS_STEP_DEFINITIONS = getStepDefinitionsForOptions({ plusModeEnabled: true });
 const REGISTERED_STEP_FLOW_IDS = self.MultiPageStepDefinitions?.getRegisteredFlowIds?.() || [DEFAULT_ACTIVE_FLOW_ID];
 const ALL_STEP_DEFINITIONS = (() => {
   if (self.MultiPageStepDefinitions?.getAllSteps) {
@@ -223,26 +134,7 @@ const ALL_STEP_DEFINITIONS = (() => {
       return allDefinitions;
     }
   }
-  return [
-    ...NORMAL_STEP_DEFINITIONS,
-    ...NORMAL_PHONE_STEP_DEFINITIONS,
-    ...NORMAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_PHONE_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_HOSTED_CHECKOUT_SUB2API_SESSION_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_HOSTED_CHECKOUT_CPA_SESSION_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_STEP_DEFINITIONS,
-    ...PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
-    ...PLUS_GPC_STEP_DEFINITIONS,
-    ...PLUS_GPC_SUB2API_SESSION_STEP_DEFINITIONS,
-    ...PLUS_GPC_CPA_SESSION_STEP_DEFINITIONS,
-    ...PLUS_GPC_PHONE_STEP_DEFINITIONS,
-    ...PLUS_GPC_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS,
-  ];
+  return NORMAL_STEP_DEFINITIONS;
 })();
 const STEP_IDS = Array.from(new Set(ALL_STEP_DEFINITIONS
   .map((definition) => Number(definition?.id))
@@ -257,24 +149,13 @@ const NORMAL_STEP_IDS = NORMAL_STEP_DEFINITIONS
   .map((definition) => Number(definition?.id))
   .filter(Number.isFinite)
   .sort((left, right) => left - right);
-const PLUS_PAYPAL_STEP_IDS = PLUS_PAYPAL_STEP_DEFINITIONS
+const PLUS_STEP_IDS = PLUS_STEP_DEFINITIONS
   .map((definition) => Number(definition?.id))
   .filter(Number.isFinite)
   .sort((left, right) => left - right);
-const PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_IDS = PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS
-  .map((definition) => Number(definition?.id))
-  .filter(Number.isFinite)
-  .sort((left, right) => left - right);
-const PLUS_GPC_STEP_IDS = PLUS_GPC_STEP_DEFINITIONS
-  .map((definition) => Number(definition?.id))
-  .filter(Number.isFinite)
-  .sort((left, right) => left - right);
-const PLUS_STEP_IDS = PLUS_PAYPAL_STEP_IDS;
 const LAST_STEP_ID = Math.max(
   NORMAL_STEP_IDS[NORMAL_STEP_IDS.length - 1] || 10,
-  PLUS_PAYPAL_STEP_IDS[PLUS_PAYPAL_STEP_IDS.length - 1] || 10,
-  PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_IDS[PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_IDS.length - 1] || 10,
-  PLUS_GPC_STEP_IDS[PLUS_GPC_STEP_IDS.length - 1] || 10
+  PLUS_STEP_IDS[PLUS_STEP_IDS.length - 1] || 10
 );
 const FINAL_OAUTH_CHAIN_START_STEP = 7;
 
@@ -561,7 +442,6 @@ const SUB2API_STEP1_RESPONSE_TIMEOUT_MS = 90000;
 const SUB2API_STEP9_RESPONSE_TIMEOUT_MS = 120000;
 const DEFAULT_SUB2API_URL = '';
 const DEFAULT_CODEX2API_URL = 'http://localhost:8080/admin/accounts';
-const DEFAULT_GPC_BASE_URL = 'https://gpc.qlhazycoder.top';
 const DEFAULT_SUB2API_GROUP_NAME = 'codex';
 const DEFAULT_SUB2API_PROXY_NAME = '';
 const DEFAULT_SUB2API_ACCOUNT_PRIORITY = 1;
@@ -633,8 +513,6 @@ const IP_PROXY_AUTO_SYNC_INTERVAL_MAX_MINUTES = 1440;
 const IP_PROXY_AUTO_SYNC_DEFAULT_INTERVAL_MINUTES = 15;
 const AUTO_RUN_RETRY_DELAY_MS = 3000;
 const AUTO_RUN_MAX_RETRIES_PER_ROUND = 3;
-const GPC_CHECKOUT_RESTART_COOLDOWN_TRIGGER_COUNT = 3;
-const GPC_CHECKOUT_RESTART_COOLDOWN_MS = 30 * 1000;
 const AUTO_STEP_DELAY_MIN_ALLOWED_SECONDS = 0;
 const AUTO_STEP_DELAY_MAX_ALLOWED_SECONDS = 600;
 const VERIFICATION_RESEND_COUNT_MIN = 0;
@@ -657,6 +535,7 @@ const PHONE_CODE_POLL_ROUNDS_MAX = 120;
 const DEFAULT_PHONE_CODE_POLL_ROUNDS = 4;
 const LEGACY_AUTO_STEP_DELAY_KEYS = ['autoStepRandomDelayMinSeconds', 'autoStepRandomDelayMaxSeconds'];
 const LEGACY_VERIFICATION_RESEND_COUNT_KEYS = ['signupVerificationResendCount', 'loginVerificationResendCount'];
+const LEGACY_GROK_SUB2API_UPLOAD_KEYS = ['grokSub2apiWebchat2ApiUploadEnabled'];
 const DEFAULT_LOCAL_CPA_STEP9_MODE = 'submit';
 const MAIL_2925_MODE_PROVIDE = 'provide';
 const MAIL_2925_MODE_RECEIVE = 'receive';
@@ -728,12 +607,7 @@ const FIVE_SIM_OPERATOR = DEFAULT_FIVE_SIM_OPERATOR;
 const PLUS_PAYMENT_METHOD_PAYPAL = 'paypal';
 const PLUS_PAYMENT_METHOD_PAYPAL_HOSTED = 'paypal-hosted';
 const PLUS_PAYMENT_METHOD_NONE = 'none';
-const PLUS_PAYMENT_METHOD_GPC_HELPER = 'gpc-helper';
-const PLUS_PAYMENT_METHOD_AUTO = 'plus-auto';
-const DEFAULT_PLUS_PAYMENT_METHOD = PLUS_PAYMENT_METHOD_AUTO;
-const DEFAULT_AUTO_BASE_URL = (typeof self !== 'undefined' && self.GpcUtils?.DEFAULT_AUTO_BASE_URL)
-  || 'https://auto.1iiu.com';
-const DEFAULT_AUTO_TIMEOUT_SECONDS = 900;
+const DEFAULT_PLUS_PAYMENT_METHOD = PLUS_PAYMENT_METHOD_PAYPAL;
 const DEFAULT_PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_SECONDS = 3;
 const DISPLAY_TIMEZONE = 'Asia/Shanghai';
 const MICROSOFT_TOKEN_DNR_RULE_ID = 1001;
@@ -827,7 +701,7 @@ function buildFlowContributionRuntimePatch(currentRuntime = {}, flowId = DEFAULT
 }
 
 function isPlusModeState(state = {}) {
-  return Boolean(state?.plusModeEnabled);
+  return false;
 }
 
 function normalizePlusPaymentMethod(value = '') {
@@ -838,18 +712,11 @@ function normalizePlusPaymentMethod(value = '') {
   const noneValue = typeof PLUS_PAYMENT_METHOD_NONE !== 'undefined'
     ? PLUS_PAYMENT_METHOD_NONE
     : 'none';
-  if (normalized === noneValue || normalized === 'no-payment' || normalized === 'skip-payment') {
+  if (normalized === noneValue) {
     return noneValue;
   }
-  if (normalized === paypalHostedValue || normalized === 'paypal_direct' || normalized === 'paypal-direct') {
+  if (normalized === paypalHostedValue) {
     return paypalHostedValue;
-  }
-  if (normalized === PLUS_PAYMENT_METHOD_GPC_HELPER) {
-    return PLUS_PAYMENT_METHOD_GPC_HELPER;
-  }
-  const autoValue = typeof PLUS_PAYMENT_METHOD_AUTO !== 'undefined' ? PLUS_PAYMENT_METHOD_AUTO : 'plus-auto';
-  if (normalized === autoValue || normalized === 'pix' || normalized === 'pix_plus' || normalized === 'pixplus') {
-    return autoValue;
   }
   return PLUS_PAYMENT_METHOD_PAYPAL;
 }
@@ -896,19 +763,19 @@ function buildResolvedStepDefinitionState(state = {}) {
   const defaultFlowId = typeof DEFAULT_ACTIVE_FLOW_ID === 'string' ? DEFAULT_ACTIVE_FLOW_ID : 'openai';
   const requestedActiveFlowId = String(state?.activeFlowId || state?.flowId || '').trim().toLowerCase() || defaultFlowId;
   const requestedSignupMethod = getSignupMethodForStepDefinitions(state);
-  const plusModeEnabled = isPlusModeState(state);
   const plusPaymentMethod = normalizePlusPaymentMethod(state?.plusPaymentMethod);
   const capabilityState = typeof resolveCurrentFlowCapabilities === 'function'
     ? resolveCurrentFlowCapabilities({
       ...state,
       activeFlowId: requestedActiveFlowId,
       flowId: requestedActiveFlowId,
-      plusModeEnabled,
+      plusModeEnabled: false,
       plusPaymentMethod,
       signupMethod: requestedSignupMethod,
     }, {
       activeFlowId: requestedActiveFlowId,
       targetId: state?.targetId,
+      accountDeliveryMode: state?.accountDeliveryMode,
       signupMethod: requestedSignupMethod,
     })
     : null;
@@ -925,15 +792,12 @@ function buildResolvedStepDefinitionState(state = {}) {
     activeFlowId: resolvedActiveFlowId,
     flowId: resolvedActiveFlowId,
     targetId: stepDefinitionOptions.targetId || capabilityState?.effectiveTargetId || state?.targetId,
-    plusModeEnabled: stepDefinitionOptions.plusModeEnabled === undefined
-      ? plusModeEnabled
-      : Boolean(stepDefinitionOptions.plusModeEnabled),
+    accountDeliveryMode: stepDefinitionOptions.accountDeliveryMode
+      || capabilityState?.effectiveAccountDeliveryMode,
+    accountDeliveryRouteId: stepDefinitionOptions.accountDeliveryRouteId
+      || capabilityState?.effectiveAccountDeliveryRouteId,
+    plusModeEnabled: false,
     plusPaymentMethod,
-    plusAccountAccessStrategy: normalizePlusAccountAccessStrategy(
-      stepDefinitionOptions.plusAccountAccessStrategy
-      ?? capabilityState?.effectivePlusAccountAccessStrategy
-      ?? state?.plusAccountAccessStrategy
-    ),
     signupMethod: resolvedSignupMethod,
     resolvedSignupMethod: resolvedSignupMethod,
     phoneSignupReloginAfterBindEmailEnabled: Boolean(state?.phoneSignupReloginAfterBindEmailEnabled),
@@ -942,39 +806,30 @@ function buildResolvedStepDefinitionState(state = {}) {
       ?? capabilityState?.runtimeLocks?.phoneVerificationEnabled
       ?? state?.phoneVerificationEnabled
     ),
+    grokSub2apiGrok2ApiUploadEnabled: Boolean(
+      stepDefinitionOptions.grokSub2apiGrok2ApiUploadEnabled
+      ?? state?.grokSub2apiGrok2ApiUploadEnabled
+    ),
   };
 }
 
 function getStepDefinitionsForState(state = {}) {
   const resolvedState = buildResolvedStepDefinitionState(state);
   const rootScope = typeof self !== 'undefined' ? self : globalThis;
-  const applyPhoneVerificationStepVisibility = (definitions = []) => {
-    if (Boolean(resolvedState?.phoneVerificationEnabled)) {
-      return definitions;
-    }
-    const hiddenStepKeys = new Set([
-      'post-login-phone-verification',
-      'post-bound-email-phone-verification',
-    ]);
-    return (Array.isArray(definitions) ? definitions : [])
-      .filter((definition) => !hiddenStepKeys.has(String(definition?.key || '').trim()))
-      .map((definition, index) => ({
-        ...definition,
-        id: index + 1,
-        order: (index + 1) * 10,
-      }));
-  };
   if (rootScope.MultiPageStepDefinitions?.getSteps) {
     const defaultFlowId = typeof DEFAULT_ACTIVE_FLOW_ID === 'string' ? DEFAULT_ACTIVE_FLOW_ID : 'openai';
     const activeFlowId = String(resolvedState?.activeFlowId || '').trim().toLowerCase() || defaultFlowId;
     const definitions = rootScope.MultiPageStepDefinitions.getSteps({
       activeFlowId,
-      plusModeEnabled: Boolean(resolvedState?.plusModeEnabled),
+      targetId: resolvedState?.targetId,
+      accountDeliveryMode: resolvedState?.accountDeliveryMode,
+      accountDeliveryRouteId: resolvedState?.accountDeliveryRouteId,
+      plusModeEnabled: false,
       plusPaymentMethod: normalizePlusPaymentMethod(resolvedState?.plusPaymentMethod),
-      plusAccountAccessStrategy: normalizePlusAccountAccessStrategy(resolvedState?.plusAccountAccessStrategy),
       signupMethod: getSignupMethodForStepDefinitions(resolvedState),
       phoneVerificationEnabled: Boolean(resolvedState?.phoneVerificationEnabled),
       phoneSignupReloginAfterBindEmailEnabled: Boolean(resolvedState?.phoneSignupReloginAfterBindEmailEnabled),
+      grokSub2apiGrok2ApiUploadEnabled: Boolean(resolvedState?.grokSub2apiGrok2ApiUploadEnabled),
     });
     if (Array.isArray(definitions)) {
       return definitions;
@@ -984,54 +839,7 @@ function getStepDefinitionsForState(state = {}) {
   if (activeFlowId && activeFlowId !== DEFAULT_ACTIVE_FLOW_ID) {
     return [];
   }
-  if (!Boolean(resolvedState?.plusModeEnabled)) {
-    return applyPhoneVerificationStepVisibility(NORMAL_STEP_DEFINITIONS);
-  }
-  const paymentMethod = normalizePlusPaymentMethod(resolvedState?.plusPaymentMethod);
-  const signupMethod = getSignupMethodForStepDefinitions(resolvedState);
-  const plusAccountAccessStrategy = normalizePlusAccountAccessStrategy(resolvedState?.plusAccountAccessStrategy);
-  if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
-    if (
-      signupMethod === SIGNUP_METHOD_EMAIL
-      && plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION
-    ) {
-      return applyPhoneVerificationStepVisibility(PLUS_GPC_SUB2API_SESSION_STEP_DEFINITIONS);
-    }
-    if (
-      signupMethod === SIGNUP_METHOD_EMAIL
-      && plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION
-    ) {
-      return applyPhoneVerificationStepVisibility(PLUS_GPC_CPA_SESSION_STEP_DEFINITIONS);
-    }
-    return applyPhoneVerificationStepVisibility(PLUS_GPC_STEP_DEFINITIONS);
-  }
-  if (paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL_HOSTED) {
-    if (signupMethod === SIGNUP_METHOD_PHONE) {
-      return applyPhoneVerificationStepVisibility(Boolean(resolvedState?.phoneSignupReloginAfterBindEmailEnabled)
-        ? PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_BOUND_EMAIL_RELOGIN_STEP_DEFINITIONS
-        : PLUS_PAYPAL_HOSTED_CHECKOUT_PHONE_STEP_DEFINITIONS);
-    }
-    if (plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
-      return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_HOSTED_CHECKOUT_SUB2API_SESSION_STEP_DEFINITIONS);
-    }
-    if (plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION) {
-      return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_HOSTED_CHECKOUT_CPA_SESSION_STEP_DEFINITIONS);
-    }
-    return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_DEFINITIONS);
-  }
-  if (
-    signupMethod === SIGNUP_METHOD_EMAIL
-    && plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION
-  ) {
-    return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_SUB2API_SESSION_STEP_DEFINITIONS);
-  }
-  if (
-    signupMethod === SIGNUP_METHOD_EMAIL
-    && plusAccountAccessStrategy === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION
-  ) {
-    return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_CPA_SESSION_STEP_DEFINITIONS);
-  }
-  return applyPhoneVerificationStepVisibility(PLUS_PAYPAL_STEP_DEFINITIONS);
+  return NORMAL_STEP_DEFINITIONS;
 }
 
 function getStepIdsForState(state = {}) {
@@ -1042,17 +850,7 @@ function getStepIdsForState(state = {}) {
       .filter(Number.isFinite)
       .sort((left, right) => left - right);
   }
-  if (!isPlusModeState(state)) {
-    return NORMAL_STEP_IDS;
-  }
-  const paymentMethod = normalizePlusPaymentMethod(state?.plusPaymentMethod);
-  if (paymentMethod === PLUS_PAYMENT_METHOD_GPC_HELPER) {
-    return PLUS_GPC_STEP_IDS;
-  }
-  if (paymentMethod === PLUS_PAYMENT_METHOD_PAYPAL_HOSTED) {
-    return PLUS_PAYPAL_HOSTED_CHECKOUT_STEP_IDS;
-  }
-  return PLUS_PAYPAL_STEP_IDS;
+  return NORMAL_STEP_IDS;
 }
 
 function getLastStepIdForState(state = {}) {
@@ -1266,12 +1064,15 @@ function setupDeclarativeNetRequestRules() {
 // ============================================================
 
 const PERSISTED_SETTING_DEFAULTS = {
+  uiLanguage: 'auto',
   targetId: 'cpa',
   activeFlowId: DEFAULT_ACTIVE_FLOW_ID,
   kiroRsUrl: String(self.MultiPageFlowRegistry?.DEFAULT_KIRO_RS_URL || '').trim(),
   kiroRsKey: '',
   grokWebchat2ApiUrl: '',
   grokWebchat2ApiAdminKey: '',
+  grok2ApiUrl: '',
+  grok2ApiAdminKey: '',
   openaiWebchatUrl: '',
   openaiWebchatAdminKey: '',
   openaiWebchatUploadEnabled: false,
@@ -1279,6 +1080,12 @@ const PERSISTED_SETTING_DEFAULTS = {
   openaiWebchatUploadedAt: 0,
   openaiWebchatUploadMessage: '',
   openaiWebchatTargetUrl: '',
+  openaiChatgpt2ApiUrl: '',
+  openaiChatgpt2ApiAdminKey: '',
+  openaiChatgpt2ApiUploadStatus: '',
+  openaiChatgpt2ApiUploadedAt: 0,
+  openaiChatgpt2ApiUploadMessage: '',
+  openaiChatgpt2ApiTargetUrl: '',
   vpsUrl: '',
   vpsPassword: '',
   localCpaStep9Mode: DEFAULT_LOCAL_CPA_STEP9_MODE,
@@ -1289,6 +1096,11 @@ const PERSISTED_SETTING_DEFAULTS = {
   sub2apiGroupNames: DEFAULT_SUB2API_GROUP_NAMES,
   sub2apiAccountPriority: DEFAULT_SUB2API_ACCOUNT_PRIORITY,
   sub2apiDefaultProxyName: DEFAULT_SUB2API_PROXY_NAME,
+  grokSub2apiGroupName: '',
+  grokSub2apiGroupNames: [],
+  grokSub2apiAccountPriority: DEFAULT_SUB2API_ACCOUNT_PRIORITY,
+  grokSub2apiDefaultProxyName: '',
+  grokSub2apiGrok2ApiUploadEnabled: false,
   ipProxyEnabled: false,
   ipProxyService: DEFAULT_IP_PROXY_SERVICE,
   ipProxyMode: DEFAULT_IP_PROXY_MODE,
@@ -1311,29 +1123,13 @@ const PERSISTED_SETTING_DEFAULTS = {
   customPassword: '',
   plusModeEnabled: false,
   plusPaymentMethod: DEFAULT_PLUS_PAYMENT_METHOD,
-  plusAccountAccessStrategy: 'oauth',
+  accountDeliveryMode: 'oauth',
   hostedCheckoutVerificationUrl: '',
   hostedCheckoutPhoneNumber: '',
   plusHostedCheckoutOauthDelaySeconds: DEFAULT_PLUS_HOSTED_CHECKOUT_OAUTH_DELAY_SECONDS,
   paypalEmail: '',
   paypalPassword: '',
   currentPayPalAccountId: '',
-  gpcBaseUrl: DEFAULT_GPC_BASE_URL,
-  gpcCardKey: '',
-  gpcBalance: '',
-  gpcBalancePayload: null,
-  gpcBalanceUpdatedAt: 0,
-  gpcBalanceError: '',
-  gpcRemainingUses: 0,
-  gpcCardStatus: '',
-  gpcPageStatus: '',
-  gpcPageStatusText: '',
-  autoCdk: '',
-  autoTimeoutSeconds: DEFAULT_AUTO_TIMEOUT_SECONDS,
-  autoOrderId: '',
-  autoJobId: '',
-  autoOrderState: '',
-  autoPaymentStatus: '',
   autoRunSkipFailures: false,
   autoRunFallbackThreadIntervalMinutes: 0,
   operationDelayEnabled: true,
@@ -1360,6 +1156,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   customMailReceiveMode: DEFAULT_CUSTOM_MAIL_RECEIVE_MODE,
   customMailHelperBaseUrl: DEFAULT_CUSTOM_MAIL_HELPER_BASE_URL,
   emailGenerator: 'duck',
+  duckDdgToken: '',
   customMailProviderPool: [],
   customEmailPool: [],
   customEmailPoolEntries: [],
@@ -1454,6 +1251,7 @@ const PERSISTED_SETTING_KEYS = Object.keys(PERSISTED_SETTING_DEFAULTS);
 const PERSISTED_SETTINGS_SCHEMA_KEYS = ['settingsSchemaVersion', 'settingsState'];
 const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'activeFlowId',
+  'uiLanguage',
   'targetId',
   'vpsUrl',
   'vpsPassword',
@@ -1465,6 +1263,13 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'sub2apiGroupNames',
   'sub2apiAccountPriority',
   'sub2apiDefaultProxyName',
+  'grokSub2apiGroupName',
+  'grokSub2apiGroupNames',
+  'grokSub2apiAccountPriority',
+  'grokSub2apiDefaultProxyName',
+  'grok2ApiUrl',
+  'grok2ApiAdminKey',
+  'grokSub2apiGrok2ApiUploadEnabled',
   'codex2apiUrl',
   'codex2apiAdminKey',
   'customPassword',
@@ -1473,7 +1278,7 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'phoneSignupReloginAfterBindEmailEnabled',
   'plusModeEnabled',
   'plusPaymentMethod',
-  'plusAccountAccessStrategy',
+  'accountDeliveryMode',
   'hostedCheckoutVerificationUrl',
   'hostedCheckoutPhoneNumber',
   'plusHostedCheckoutOauthDelaySeconds',
@@ -1490,6 +1295,8 @@ const SETTINGS_SCHEMA_VIEW_KEYS = Object.freeze([
   'openaiWebchatUrl',
   'openaiWebchatAdminKey',
   'openaiWebchatUploadEnabled',
+  'openaiChatgpt2ApiUrl',
+  'openaiChatgpt2ApiAdminKey',
   'stepExecutionRangeByFlow',
 ]);
 const SETTINGS_SCHEMA_VIEW_KEY_SET = new Set(SETTINGS_SCHEMA_VIEW_KEYS);
@@ -1534,7 +1341,6 @@ const DEFAULT_STATE = {
   autoRunAttemptRun: 0, // 当前轮次的重试序号。
   autoRunSessionId: 0,
   autoRunRoundSummaries: [], // 自动运行轮次摘要。
-  autoRunGpcCheckoutRestartCount: 0, // 当前轮次内 GPC 回退到 step 6 的累计次数。
   autoRunTimerPlan: null, // 自动运行可恢复计时计划快照。
   autoRunCountdownAt: null,
   autoRunCountdownTitle: '',
@@ -2051,10 +1857,6 @@ async function ensureResolvedSignupMethodForRun(options = {}) {
 }
 
 function normalizePlusPaymentMethod(value = '') {
-  const rootScope = typeof self !== 'undefined' ? self : globalThis;
-  if (rootScope.GpcUtils?.normalizePlusPaymentMethod) {
-    return rootScope.GpcUtils.normalizePlusPaymentMethod(value);
-  }
   const normalized = String(value || '').trim().toLowerCase();
   const paypalHostedValue = typeof PLUS_PAYMENT_METHOD_PAYPAL_HOSTED !== 'undefined'
     ? PLUS_PAYMENT_METHOD_PAYPAL_HOSTED
@@ -2062,31 +1864,13 @@ function normalizePlusPaymentMethod(value = '') {
   const noneValue = typeof PLUS_PAYMENT_METHOD_NONE !== 'undefined'
     ? PLUS_PAYMENT_METHOD_NONE
     : 'none';
-  if (normalized === noneValue || normalized === 'no-payment' || normalized === 'skip-payment') {
+  if (normalized === noneValue) {
     return noneValue;
   }
-  if (normalized === paypalHostedValue || normalized === 'paypal_direct' || normalized === 'paypal-direct') {
+  if (normalized === paypalHostedValue) {
     return paypalHostedValue;
   }
-  if (normalized === PLUS_PAYMENT_METHOD_GPC_HELPER) {
-    return PLUS_PAYMENT_METHOD_GPC_HELPER;
-  }
-  if (typeof PLUS_PAYMENT_METHOD_AUTO !== 'undefined'
-    && (normalized === PLUS_PAYMENT_METHOD_AUTO || normalized === 'pix' || normalized === 'pix_plus' || normalized === 'pixplus')) {
-    return PLUS_PAYMENT_METHOD_AUTO;
-  }
   return PLUS_PAYMENT_METHOD_PAYPAL;
-}
-
-function normalizePlusAccountAccessStrategy(value = '') {
-  const normalized = String(value || '').trim().toLowerCase();
-  if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION) {
-    return PLUS_ACCOUNT_ACCESS_STRATEGY_SUB2API_CODEX_SESSION;
-  }
-  if (normalized === PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION) {
-    return PLUS_ACCOUNT_ACCESS_STRATEGY_CPA_CODEX_SESSION;
-  }
-  return PLUS_ACCOUNT_ACCESS_STRATEGY_OAUTH;
 }
 
 function normalizeFiveSimCountryId(value, fallback = FIVE_SIM_COUNTRY_ID) {
@@ -2555,6 +2339,15 @@ function normalizeEmailGenerator(value = '') {
   if (normalized === 'cloudmail') return 'cloudmail';
   if (normalized === yydsMailGenerator) return yydsMailGenerator;
   return 'duck';
+}
+
+function normalizeDuckDdgToken(value = '') {
+  if (typeof self.MultiPageBackgroundDuckTokenProvider?.normalizeDuckDdgToken === 'function') {
+    return self.MultiPageBackgroundDuckTokenProvider.normalizeDuckDdgToken(value);
+  }
+  const trimmed = String(value || '').trim();
+  const bearerMatch = trimmed.match(/^Bearer\s+(.+)$/i);
+  return (bearerMatch ? bearerMatch[1] : trimmed).trim();
 }
 
 function normalizeIcloudFetchMode(value = '') {
@@ -3230,6 +3023,10 @@ function normalizeStepExecutionRangeByFlow(value = {}) {
 
 function normalizePersistentSettingValue(key, value) {
   switch (key) {
+    case 'uiLanguage':
+      return self.FlowPilotI18n?.normalizeLanguageSetting
+        ? self.FlowPilotI18n.normalizeLanguageSetting(value)
+        : (['auto', 'zh-CN', 'en-US'].includes(String(value || '').trim()) ? String(value || '').trim() : 'auto');
     case 'targetId':
       return String(value || '').trim().toLowerCase();
     case 'activeFlowId':
@@ -3239,19 +3036,27 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '').trim().toLowerCase() === 'kiro' ? 'kiro' : DEFAULT_ACTIVE_FLOW_ID;
     case 'kiroRsUrl':
     case 'grokWebchat2ApiUrl':
+    case 'grok2ApiUrl':
     case 'openaiWebchatUrl':
+    case 'openaiChatgpt2ApiUrl':
       return String(value || '').trim();
     case 'kiroRsKey':
     case 'grokWebchat2ApiAdminKey':
+    case 'grok2ApiAdminKey':
     case 'openaiWebchatAdminKey':
+    case 'openaiChatgpt2ApiAdminKey':
       return String(value || '').trim();
     case 'openaiWebchatUploadEnabled':
       return Boolean(value);
     case 'openaiWebchatUploadStatus':
     case 'openaiWebchatUploadMessage':
     case 'openaiWebchatTargetUrl':
+    case 'openaiChatgpt2ApiUploadStatus':
+    case 'openaiChatgpt2ApiUploadMessage':
+    case 'openaiChatgpt2ApiTargetUrl':
       return String(value || '').trim();
     case 'openaiWebchatUploadedAt':
+    case 'openaiChatgpt2ApiUploadedAt':
       return Math.max(0, Number(value) || 0);
     case 'vpsUrl':
       return String(value || '').trim();
@@ -3273,6 +3078,15 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeSub2ApiAccountPriority(value);
     case 'sub2apiDefaultProxyName':
       return String(value || '').trim();
+    case 'grokSub2apiGroupName':
+    case 'grokSub2apiDefaultProxyName':
+      return String(value || '').trim();
+    case 'grokSub2apiGroupNames':
+      return normalizeSub2ApiGroupNames(value);
+    case 'grokSub2apiAccountPriority':
+      return normalizeSub2ApiAccountPriority(value);
+    case 'grokSub2apiGrok2ApiUploadEnabled':
+      return Boolean(value);
     case 'ipProxyEnabled':
       return Boolean(value);
     case 'ipProxyService':
@@ -3347,8 +3161,10 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeSignupMethod(value);
     case 'plusPaymentMethod':
       return normalizePlusPaymentMethod(value);
-    case 'plusAccountAccessStrategy':
-      return normalizePlusAccountAccessStrategy(value);
+    case 'accountDeliveryMode':
+      return self.MultiPageOpenAiAccountDelivery?.normalizeAccountDeliveryMode?.(value, 'oauth')
+        || String(value || '').trim().toLowerCase()
+        || 'oauth';
     case 'hostedCheckoutVerificationUrl':
       return String(value || '').trim();
     case 'hostedCheckoutPhoneNumber':
@@ -3363,56 +3179,6 @@ function normalizePersistentSettingValue(key, value) {
       return String(value || '');
     case 'currentPayPalAccountId':
       return String(value || '').trim();
-    case 'gpcBaseUrl':
-      {
-        const defaultGpcBaseUrl = PERSISTED_SETTING_DEFAULTS.gpcBaseUrl
-          || (typeof DEFAULT_GPC_BASE_URL !== 'undefined' ? DEFAULT_GPC_BASE_URL : 'https://gpc.qlhazycoder.top');
-        const normalizedGpcBaseUrl = self.GpcUtils?.normalizeGpcBaseUrl
-          ? self.GpcUtils.normalizeGpcBaseUrl(value || defaultGpcBaseUrl)
-          : String(value || defaultGpcBaseUrl).trim().replace(/\/+$/g, '');
-        if (!self.GpcUtils?.normalizeGpcBaseUrl) {
-          try {
-            const parsed = new URL(normalizedGpcBaseUrl);
-            const hostname = parsed.hostname.toLowerCase();
-            if (hostname !== 'gpc.qlhazycoder.top' && hostname !== 'localhost' && hostname !== '127.0.0.1') {
-              return defaultGpcBaseUrl;
-            }
-          } catch {
-            return defaultGpcBaseUrl;
-          }
-        }
-        return normalizedGpcBaseUrl;
-      }
-    case 'gpcCardKey':
-      return self.GpcUtils?.normalizeGpcCardKey
-        ? self.GpcUtils.normalizeGpcCardKey(value)
-        : String(value || '').trim().toUpperCase();
-    case 'gpcBalance':
-    case 'gpcBalanceError':
-    case 'gpcCardStatus':
-    case 'gpcPageStatus':
-    case 'gpcPageStatusText':
-      return String(value || '').trim();
-    case 'gpcBalancePayload':
-      return value && typeof value === 'object' && !Array.isArray(value) ? value : null;
-    case 'gpcBalanceUpdatedAt':
-    case 'gpcRemainingUses':
-      return Math.max(0, Number(value) || 0);
-    case 'autoCdk':
-      return self.GpcUtils?.normalizeAutoCdk
-        ? self.GpcUtils.normalizeAutoCdk(value)
-        : String(value || '').trim();
-    case 'autoTimeoutSeconds': {
-      const numeric = Math.floor(Number(value));
-      return Number.isFinite(numeric) && numeric > 0
-        ? Math.min(3600, Math.max(30, numeric))
-        : DEFAULT_AUTO_TIMEOUT_SECONDS;
-    }
-    case 'autoOrderId':
-    case 'autoJobId':
-    case 'autoOrderState':
-    case 'autoPaymentStatus':
-      return String(value || '').trim();
     case 'autoRunSkipFailures':
       return Boolean(value);
     case 'operationDelayEnabled':
@@ -3426,8 +3192,9 @@ function normalizePersistentSettingValue(key, value) {
     case 'phoneSmsReuseEnabled':
     case 'freePhoneReuseEnabled':
     case 'freePhoneReuseAutoEnabled':
-    case 'plusModeEnabled':
       return Boolean(value);
+    case 'plusModeEnabled':
+      return false;
     case 'phoneSmsProvider':
       return normalizePhoneSmsProvider(value);
     case 'phoneSmsProviderOrder':
@@ -3460,6 +3227,8 @@ function normalizePersistentSettingValue(key, value) {
       return normalizeCustomMailHelperBaseUrl(value);
     case 'emailGenerator':
       return normalizeEmailGenerator(value);
+    case 'duckDdgToken':
+      return normalizeDuckDdgToken(value);
     case 'customMailProviderPool':
     case 'customEmailPool':
       return normalizeCustomEmailPool(value);
@@ -3646,8 +3415,20 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
   const persistedSettingKeys = Array.isArray(typeof PERSISTED_SETTING_KEYS !== 'undefined' ? PERSISTED_SETTING_KEYS : null)
     ? PERSISTED_SETTING_KEYS
     : Object.keys(persistedSettingDefaults);
+  const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
+    ? getSettingsSchemaApi()
+    : null;
+  const legacyMigrationStorageKeys = getSettingsSchemaLegacyMigrationStorageKeys(settingsSchemaApi);
 
   const normalizedInput = { ...input };
+  if (
+    normalizedInput.grokSub2apiGrok2ApiUploadEnabled === undefined
+    && normalizedInput.grokSub2apiWebchat2ApiUploadEnabled !== undefined
+  ) {
+    normalizedInput.grokSub2apiGrok2ApiUploadEnabled = Boolean(
+      normalizedInput.grokSub2apiWebchat2ApiUploadEnabled
+    );
+  }
   if (normalizedInput.autoStepDelaySeconds === undefined) {
     const legacyAutoStepDelaySeconds = resolveLegacyAutoStepDelaySeconds(normalizedInput);
     if (legacyAutoStepDelaySeconds !== undefined) {
@@ -3693,7 +3474,15 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
       payload.heroSmsReuseEnabled = normalizedReuseEnabled;
   }
 
-  if (requireKnownKeys && matchedKeyCount === 0 && !hasExplicitSettingsState) {
+  const matchedLegacyMigrationKeyCount = legacyMigrationStorageKeys.filter((key) => (
+    Object.prototype.hasOwnProperty.call(normalizedInput, key)
+  )).length;
+  if (
+    requireKnownKeys
+    && matchedKeyCount === 0
+    && matchedLegacyMigrationKeyCount === 0
+    && !hasExplicitSettingsState
+  ) {
     throw new Error('\u914d\u7f6e\u6587\u4ef6\u4e2d\u6ca1\u6709\u53ef\u8bc6\u522b\u7684\u914d\u7f6e\u5185\u5bb9\u3002');
   }
 
@@ -3777,14 +3566,16 @@ function buildPersistentSettingsPayload(input = {}, options = {}) {
   const hasExplicitSettingsSchema = hasExplicitSettingsState
     || Object.prototype.hasOwnProperty.call(normalizedInput, 'settingsSchemaVersion');
   if (fillDefaults || hasExplicitSettingsSchema) {
-    const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
-      ? getSettingsSchemaApi()
-      : null;
     if (settingsSchemaApi?.normalizeSettingsState && settingsSchemaApi?.buildSettingsView) {
       const settingsSchemaInput = {};
       for (const key of persistedSettingKeys) {
         if (normalizedInput[key] !== undefined) {
           settingsSchemaInput[key] = payload[key];
+        }
+      }
+      for (const key of legacyMigrationStorageKeys) {
+        if (Object.prototype.hasOwnProperty.call(normalizedInput, key)) {
+          settingsSchemaInput[key] = normalizedInput[key];
         }
       }
       Object.assign(payload, projectSettingsSchemaView(settingsSchemaApi, {
@@ -3810,6 +3601,15 @@ function getSettingsSchemaApi() {
     flowRegistry: self.MultiPageFlowRegistry,
     defaultFlowId: DEFAULT_ACTIVE_FLOW_ID,
   });
+}
+
+function getSettingsSchemaLegacyMigrationStorageKeys(settingsSchemaApi = null) {
+  const api = settingsSchemaApi || (typeof getSettingsSchemaApi === 'function' ? getSettingsSchemaApi() : null);
+  const keys = api?.getLegacyMigrationStorageKeys?.();
+  if (!Array.isArray(keys)) {
+    return [];
+  }
+  return Array.from(new Set(keys.map((key) => String(key || '').trim()).filter(Boolean)));
 }
 
 function projectSettingsSchemaView(settingsSchemaApi, normalizedInput = {}, payload = {}) {
@@ -3862,6 +3662,12 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
     const normalized = String(value || '').trim().toLowerCase();
     return normalized || String(fallback || DEFAULT_ACTIVE_FLOW_ID).trim().toLowerCase() || DEFAULT_ACTIVE_FLOW_ID;
   };
+  const normalizePatchTargetId = (flowId, value = '', fallback = '') => {
+    if (typeof self.MultiPageFlowRegistry?.normalizeTargetId === 'function') {
+      return self.MultiPageFlowRegistry.normalizeTargetId(flowId, value, fallback);
+    }
+    return String(value || fallback || '').trim().toLowerCase();
+  };
   const assignIfUpdated = (key, path) => {
     if (hasUpdate(key)) {
       setSettingsStatePatchValue(patch, path, updates[key]);
@@ -3869,6 +3675,7 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   };
 
   assignIfUpdated('activeFlowId', ['activeFlowId']);
+  assignIfUpdated('uiLanguage', ['ui', 'language']);
   if (hasUpdate('selectedTargetId') || hasUpdate('targetId')) {
     const flowId = normalizePatchFlowId(
       updates.activeFlowId ?? updates.flowId,
@@ -3883,22 +3690,51 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('vpsUrl', ['flows', 'openai', 'targets', 'cpa', 'vpsUrl']);
   assignIfUpdated('vpsPassword', ['flows', 'openai', 'targets', 'cpa', 'vpsPassword']);
   assignIfUpdated('localCpaStep9Mode', ['flows', 'openai', 'targets', 'cpa', 'localCpaStep9Mode']);
-  assignIfUpdated('sub2apiUrl', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiUrl']);
-  assignIfUpdated('sub2apiEmail', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiEmail']);
-  assignIfUpdated('sub2apiPassword', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiPassword']);
+  for (const key of ['sub2apiUrl', 'sub2apiEmail', 'sub2apiPassword']) {
+    if (hasUpdate(key)) {
+      setSettingsStatePatchValue(patch, ['flows', 'openai', 'targets', 'sub2api', key], updates[key]);
+      setSettingsStatePatchValue(patch, ['flows', 'grok', 'targets', 'sub2api', key], updates[key]);
+    }
+  }
   assignIfUpdated('sub2apiGroupName', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiGroupName']);
   assignIfUpdated('sub2apiGroupNames', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiGroupNames']);
   assignIfUpdated('sub2apiAccountPriority', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiAccountPriority']);
   assignIfUpdated('sub2apiDefaultProxyName', ['flows', 'openai', 'targets', 'sub2api', 'sub2apiDefaultProxyName']);
+  assignIfUpdated('grokSub2apiGroupName', ['flows', 'grok', 'targets', 'sub2api', 'sub2apiGroupName']);
+  assignIfUpdated('grokSub2apiGroupNames', ['flows', 'grok', 'targets', 'sub2api', 'sub2apiGroupNames']);
+  assignIfUpdated('grokSub2apiAccountPriority', ['flows', 'grok', 'targets', 'sub2api', 'sub2apiAccountPriority']);
+  assignIfUpdated('grokSub2apiDefaultProxyName', ['flows', 'grok', 'targets', 'sub2api', 'sub2apiDefaultProxyName']);
+  if (hasUpdate('grokSub2apiGrok2ApiUploadEnabled') || hasUpdate('grokSub2apiWebchat2ApiUploadEnabled')) {
+    setSettingsStatePatchValue(
+      patch,
+      ['flows', 'grok', 'targets', 'sub2api', 'grok2apiUploadEnabled'],
+      hasUpdate('grokSub2apiGrok2ApiUploadEnabled')
+        ? updates.grokSub2apiGrok2ApiUploadEnabled
+        : updates.grokSub2apiWebchat2ApiUploadEnabled
+    );
+  }
   assignIfUpdated('codex2apiUrl', ['flows', 'openai', 'targets', 'codex2api', 'codex2apiUrl']);
   assignIfUpdated('codex2apiAdminKey', ['flows', 'openai', 'targets', 'codex2api', 'codex2apiAdminKey']);
   assignIfUpdated('customPassword', ['services', 'account', 'customPassword']);
   assignIfUpdated('signupMethod', ['flows', 'openai', 'signup', 'signupMethod']);
   assignIfUpdated('phoneVerificationEnabled', ['flows', 'openai', 'signup', 'phoneVerificationEnabled']);
   assignIfUpdated('phoneSignupReloginAfterBindEmailEnabled', ['flows', 'openai', 'signup', 'phoneSignupReloginAfterBindEmailEnabled']);
-  assignIfUpdated('plusModeEnabled', ['flows', 'openai', 'plus', 'plusModeEnabled']);
+  if (hasUpdate('plusModeEnabled')) {
+    setSettingsStatePatchValue(patch, ['flows', 'openai', 'plus', 'plusModeEnabled'], false);
+  }
   assignIfUpdated('plusPaymentMethod', ['flows', 'openai', 'plus', 'plusPaymentMethod']);
-  assignIfUpdated('plusAccountAccessStrategy', ['flows', 'openai', 'plus', 'plusAccountAccessStrategy']);
+  if (
+    hasUpdate('accountDeliveryMode')
+    && hasUpdate('targetId')
+    && String(updates.targetId || '').trim()
+  ) {
+    const targetId = normalizePatchTargetId('openai', updates.targetId, 'cpa');
+    setSettingsStatePatchValue(
+      patch,
+      ['flows', 'openai', 'targets', targetId, 'accountDeliveryMode'],
+      updates.accountDeliveryMode
+    );
+  }
   assignIfUpdated('mailProvider', ['services', 'email', 'provider']);
   assignIfUpdated('customMailReceiveMode', ['services', 'email', 'customReceiveMode']);
   assignIfUpdated('customMailHelperBaseUrl', ['services', 'email', 'customHelperBaseUrl']);
@@ -3907,6 +3743,8 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
   assignIfUpdated('ipProxyMode', ['services', 'proxy', 'mode']);
   assignIfUpdated('kiroRsUrl', ['flows', 'kiro', 'targets', 'kiro-rs', 'baseUrl']);
   assignIfUpdated('kiroRsKey', ['flows', 'kiro', 'targets', 'kiro-rs', 'apiKey']);
+  assignIfUpdated('grok2ApiUrl', ['flows', 'grok', 'targets', 'grok2api', 'baseUrl']);
+  assignIfUpdated('grok2ApiAdminKey', ['flows', 'grok', 'targets', 'grok2api', 'apiKey']);
   if (hasUpdate('grokWebchat2ApiUrl') || hasUpdate('openaiWebchatUrl')) {
     const sharedWebchatUrl = hasUpdate('openaiWebchatUrl') ? updates.openaiWebchatUrl : updates.grokWebchat2ApiUrl;
     setSettingsStatePatchValue(patch, ['flows', 'openai', 'targets', 'webchat', 'baseUrl'], sharedWebchatUrl);
@@ -3920,6 +3758,8 @@ function buildSettingsStatePatchFromFlatUpdates(updates = {}) {
     setSettingsStatePatchValue(patch, ['flows', 'grok', 'targets', 'webchat2api', 'apiKey'], sharedWebchatAdminKey);
   }
   assignIfUpdated('openaiWebchatUploadEnabled', ['flows', 'openai', 'webchatUpload', 'enabled']);
+  assignIfUpdated('openaiChatgpt2ApiUrl', ['flows', 'openai', 'targets', 'chatgpt2api', 'baseUrl']);
+  assignIfUpdated('openaiChatgpt2ApiAdminKey', ['flows', 'openai', 'targets', 'chatgpt2api', 'apiKey']);
 
   if (hasUpdate('stepExecutionRangeByFlow') && isPlainObjectValue(updates.stepExecutionRangeByFlow)) {
     Object.entries(updates.stepExecutionRangeByFlow).forEach(([rawFlowId, range]) => {
@@ -3955,11 +3795,16 @@ function buildPersistedSettingsStoragePayload(payload = {}) {
 }
 
 async function getPersistedSettings() {
+  const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
+    ? getSettingsSchemaApi()
+    : null;
   const stored = await chrome.storage.local.get([
     ...PERSISTED_SETTING_KEYS,
     ...PERSISTED_SETTINGS_SCHEMA_KEYS,
+    ...getSettingsSchemaLegacyMigrationStorageKeys(settingsSchemaApi),
     ...LEGACY_AUTO_STEP_DELAY_KEYS,
     ...LEGACY_VERIFICATION_RESEND_COUNT_KEYS,
+    ...LEGACY_GROK_SUB2API_UPLOAD_KEYS,
   ]);
   return buildPersistentSettingsPayload(stored, { fillDefaults: true });
 }
@@ -4285,6 +4130,7 @@ async function setPersistentSettings(updates, options = {}) {
   const settingsSchemaApi = typeof getSettingsSchemaApi === 'function'
     ? getSettingsSchemaApi()
     : null;
+  const legacyMigrationStorageKeys = getSettingsSchemaLegacyMigrationStorageKeys(settingsSchemaApi);
   const hasSchemaApi = Boolean(
     settingsSchemaApi?.normalizeSettingsState
     && settingsSchemaApi?.buildSettingsView
@@ -4358,10 +4204,16 @@ async function setPersistentSettings(updates, options = {}) {
           ...PERSISTED_SETTING_KEYS,
           ...PERSISTED_SETTINGS_SCHEMA_KEYS,
           ...SETTINGS_SCHEMA_VIEW_KEYS,
+          ...legacyMigrationStorageKeys,
           ...LEGACY_AUTO_STEP_DELAY_KEYS,
           ...LEGACY_VERIFICATION_RESEND_COUNT_KEYS,
+          ...LEGACY_GROK_SUB2API_UPLOAD_KEYS,
         ]))
-        : SETTINGS_SCHEMA_VIEW_KEYS;
+        : Array.from(new Set([
+          ...SETTINGS_SCHEMA_VIEW_KEYS,
+          ...legacyMigrationStorageKeys,
+          ...LEGACY_GROK_SUB2API_UPLOAD_KEYS,
+        ]));
       await chrome.storage.local.remove(removedKeys);
     }
     await chrome.storage.local.set(storagePayload);
@@ -4483,6 +4335,7 @@ async function clearGrokSsoCookies() {
         extractedAt: 0,
       },
       upload: {
+        targetId: '',
         status: '',
         uploadedAt: 0,
         message: '',
@@ -8988,6 +8841,10 @@ async function registerTab(source, tabId) {
   return tabRuntime.registerTab(source, tabId);
 }
 
+async function unregisterTab(source, expectedTabId = null) {
+  return tabRuntime.unregisterTab(source, expectedTabId);
+}
+
 async function isTabAlive(source) {
   return tabRuntime.isTabAlive(source);
 }
@@ -9622,7 +9479,6 @@ function getErrorMessage(error) {
     return loggingStatus.getErrorMessage(error);
   }
   return String(typeof error === 'string' ? error : error?.message || '')
-    .replace(/^GPC_PAGE_FLOW_ENDED::/i, '')
     .replace(/^AUTO_RUN_STEP_IDLE_RESTART::/i, '');
 }
 
@@ -9855,6 +9711,15 @@ function isKiroProxyFailure(error) {
   return /Kiro\s*(?:注册页|桌面授权页).*(?:CloudFront\s*拒绝请求|AWS\s*请求异常)|(?:当前代理\s*IP|出口区域异常).*(?:切换代理|更换代理)|AWS\s*风控.*(?:切换代理|更换代理)/i.test(message);
 }
 
+function isDuckDdgDailyLimitFailure(error) {
+  const checker = self.MultiPageBackgroundDuckTokenProvider?.isDuckDdgDailyLimitFailure;
+  if (typeof checker === 'function' && checker(error)) {
+    return true;
+  }
+  const message = getErrorMessage(error);
+  return /DDG_DAILY_LIMIT::|DuckDuckGo[\s\S]*(?:每日|每天|今日|日上限|日限|单日|一天)[\s\S]*(?:限制|限额|上限|额度|次数|数量|已达|达到|超出|超过|用完)|DuckDuckGo[\s\S]*(?:daily|quota|limit|maximum|max)/i.test(message);
+}
+
 function isStep4Route405RecoveryLimitFailure(error) {
   const message = getErrorMessage(error);
   return /STEP4_405_RECOVERY_LIMIT::|步骤\s*4：检测到\s*405\s*错误页面，已连续点击“重试”恢复/i.test(message);
@@ -9868,24 +9733,6 @@ function isPhoneSmsPlatformRateLimitFailure(error) {
 function isPlusCheckoutNonFreeTrialFailure(error) {
   const message = getErrorMessage(error);
   return /PLUS_CHECKOUT_NON_FREE_TRIAL::|今日应付金额不是\s*0|(?:没有|无|不具备)[\s:：-]*(?:免费\s*|Plus\s*)?试用资格|更换有试用资格的账号\s*Token|not\s+eligible\s+for\s+(?:a\s+)?Plus\s+trial|no\s+Plus\s+trial\s+eligibility|该账号已经开通过\s*ChatGPT\s*订阅套餐，不能重复订阅(?:。)?(?:（\s*checkout_order\s*）|\(\s*checkout_order\s*\))?/i.test(message);
-}
-
-function isGpcPageFlowEndedFailure(error) {
-  const message = String(typeof error === 'string' ? error : error?.message || '');
-  return /GPC_PAGE_FLOW_ENDED::/i.test(message);
-}
-
-function isGpcCheckoutRestartRequiredFailure(error) {
-  const rawMessage = String(typeof error === 'string' ? error : error?.message || '');
-  const message = getErrorMessage(error);
-  const combinedMessage = `${rawMessage}\n${message}`;
-  if (isPlusCheckoutNonFreeTrialFailure(combinedMessage)) {
-    return false;
-  }
-  if (/GPC_PAGE_FLOW_ENDED::/i.test(rawMessage)) {
-    return true;
-  }
-  return /GPC\s*页面[\s\S]*(?:请重新准备|请求超时|超时|timeout|timed\s*out|卡死|无响应|失败|未检测到订阅完成|已尝试启动)|步骤\s*[67][\s\S]*GPC[\s\S]*(?:页面|请求超时|超时|timeout|timed\s*out|卡死|无响应|失败)|account\s+already\s+linked|(?:账号|账户)[\s\S]*(?:已绑定|已经绑定|已绑|绑了订阅|绑定了订阅)/i.test(message);
 }
 
 function isPlusCheckoutRestartStep(step, stepExecutionKey = '', state = {}) {
@@ -10046,8 +9893,6 @@ function getDownstreamStateResets(step, state = {}) {
     plusBillingAddress: null,
     plusPaypalApprovedAt: null,
     plusReturnUrl: '',
-    gpcPageStatus: '',
-    gpcPageStatusText: '',
   };
   const oauthRuntimeResets = {
     oauthUrl: null,
@@ -10185,8 +10030,6 @@ function getDownstreamStateResets(step, state = {}) {
         plusBillingAddress: null,
         plusPaypalApprovedAt: null,
         plusReturnUrl: '',
-        gpcPageStatus: '',
-        gpcPageStatusText: '',
       } : {}),
       ...(isApprovalNode ? {
         plusPaypalApprovedAt: null,
@@ -11130,6 +10973,7 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'paypal-approve',
   'plus-checkout-return',
   'sub2api-session-import',
+  'sub2api-agent-identity-import',
   'cpa-session-import',
   'openai-upload-session-to-webchat',
   'oauth-login',
@@ -11156,6 +11000,9 @@ const AUTO_RUN_BACKGROUND_COMPLETED_STEP_KEYS = new Set([
   'grok-submit-profile',
   'grok-extract-sso-cookie',
   'grok-upload-sso-to-webchat2api',
+  'grok-upload-sso-to-grok2api',
+  'grok-start-sub2api-oauth',
+  'grok-complete-sub2api-oauth',
 ]);
 const STEP_COMPLETION_SIGNAL_STEP_KEYS = new Set([
   'fill-password',
@@ -11806,6 +11653,9 @@ async function requestStop(options = {}) {
       autoRunTimerPlan: null,
     });
     await clearAutoRunTimerAlarm();
+    if (typeof grokSub2ApiOAuthRunner !== 'undefined') {
+      await grokSub2ApiOAuthRunner?.cleanupAuthorizationTab();
+    }
     clearStopRequest();
     return;
   }
@@ -11818,6 +11668,9 @@ async function requestStop(options = {}) {
   abortActiveIcloudRequests();
   cleanupStep8NavigationListeners();
   rejectPendingStep8(new Error(STOP_ERROR_MESSAGE));
+  if (typeof grokSub2ApiOAuthRunner !== 'undefined') {
+    await grokSub2ApiOAuthRunner?.cleanupAuthorizationTab();
+  }
 
   await addLog(logMessage, 'warn');
   await setState(clearStep5ProfileStatePatch());
@@ -12218,6 +12071,18 @@ function getCurrentPayPalAccount(state = null) {
   return payPalAccountStore?.getCurrentPayPalAccount?.(state || {}) || null;
 }
 
+const duckTokenProvider = self.MultiPageBackgroundDuckTokenProvider?.createDuckTokenProvider({
+  addLog,
+  broadcastDataUpdate,
+  chromeApi: chrome,
+  DUCK_AUTOFILL_URL,
+  fetchImpl: fetch,
+  reuseOrCreateTab,
+  sendToContentScript,
+  setPersistentSettings,
+  throwIfStopped,
+});
+
 const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGeneratedEmailHelpers({
   addLog,
   buildGeneratedAliasEmail,
@@ -12225,7 +12090,6 @@ const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGenerat
   buildCloudflareTempEmailHeaders,
   CLOUDFLARE_TEMP_EMAIL_GENERATOR,
   CUSTOM_EMAIL_POOL_GENERATOR,
-  DUCK_AUTOFILL_URL,
   fetch,
   fetchIcloudHideMyEmail,
   getCloudflareTempEmailAddressFromResponse,
@@ -12234,14 +12098,14 @@ const generatedEmailHelpers = self.MultiPageGeneratedEmailHelpers?.createGenerat
   getRegistrationEmailBaseline,
   getState,
   ensureMail2925AccountForFlow,
+  fetchDuckEmailWithToken: duckTokenProvider?.fetchDuckEmailWithToken,
   joinCloudflareTempEmailUrl,
+  normalizeDuckDdgToken,
   normalizeCloudflareDomain,
   normalizeCloudflareTempEmailAddress,
   normalizeEmailGenerator,
   isGeneratedAliasProvider,
   persistRegistrationEmailState,
-  reuseOrCreateTab,
-  sendToContentScript,
   setEmailState,
   throwIfStopped,
 });
@@ -12264,10 +12128,6 @@ async function requestCloudflareTempEmailJson(config, path, options = {}) {
 
 async function fetchCloudflareTempEmailAddress(state, options = {}) {
   return generatedEmailHelpers.fetchCloudflareTempEmailAddress(state, options);
-}
-
-async function fetchDuckEmail(options = {}) {
-  return generatedEmailHelpers.fetchDuckEmail(options);
 }
 
 async function fetchGeneratedEmail(state, options = {}) {
@@ -12325,6 +12185,7 @@ const AUTO_RUN_NODE_DELAYS = Object.freeze({
   'paypal-approve': 2000,
   'plus-checkout-return': 1000,
   'sub2api-session-import': 0,
+  'sub2api-agent-identity-import': 0,
   'cpa-session-import': 0,
   'oauth-login': 2000,
   'fetch-login-code': 2000,
@@ -12560,146 +12421,6 @@ async function maybeSwitchIpProxyAfterAutoRunRoundSuccess(payload = {}) {
   return switchResult;
 }
 
-function resolveGpcBaseUrl(apiUrl = '') {
-  if (self.GpcUtils?.normalizeGpcBaseUrl) {
-    return self.GpcUtils.normalizeGpcBaseUrl(apiUrl || DEFAULT_GPC_BASE_URL);
-  }
-  let normalized = String(apiUrl || DEFAULT_GPC_BASE_URL).trim().replace(/\/+$/g, '');
-  normalized = normalized.replace(/\/api\/checkout\/start$/i, '');
-  normalized = normalized.replace(/\/api\/web\/card\/balance(?:\?.*)?$/i, '');
-  normalized = normalized.replace(/\/api\/card\/balance(?:\?.*)?$/i, '');
-  return normalized || DEFAULT_GPC_BASE_URL;
-}
-
-function normalizeGpcCardKey(value = '') {
-  if (self.GpcUtils?.normalizeGpcCardKey) {
-    return self.GpcUtils.normalizeGpcCardKey(value);
-  }
-  return String(value || '').trim().toUpperCase();
-}
-
-function isGpcCardKeyFormat(value = '') {
-  if (self.GpcUtils?.isGpcCardKeyFormat) {
-    return self.GpcUtils.isGpcCardKeyFormat(value);
-  }
-  return /^GPC-[A-F0-9]{8}-[A-F0-9]{8}-[A-F0-9]{8}$/.test(normalizeGpcCardKey(value));
-}
-
-function buildGpcCardBalanceRequestUrl(apiUrl = '', cardKey = '') {
-  if (self.GpcUtils?.buildGpcCardBalanceUrl) {
-    return self.GpcUtils.buildGpcCardBalanceUrl(apiUrl, cardKey);
-  }
-  const baseUrl = resolveGpcBaseUrl(apiUrl);
-  if (!baseUrl) {
-    return '';
-  }
-  const normalizedCardKey = normalizeGpcCardKey(cardKey);
-  return `${baseUrl}/api/web/card/balance${normalizedCardKey ? `?card_key=${encodeURIComponent(normalizedCardKey)}` : ''}`;
-}
-
-function formatGpcCardBalancePayload(payload = {}) {
-  if (self.GpcUtils?.formatGpcBalancePayload) {
-    return self.GpcUtils.formatGpcBalancePayload(payload);
-  }
-  if (!payload || typeof payload !== 'object') {
-    return '';
-  }
-  const remaining = payload.remaining_uses ?? payload.remainingUses ?? payload.balance ?? payload.remaining;
-  const total = payload.total_uses ?? payload.totalUses;
-  const used = payload.used_uses ?? payload.usedUses;
-  const status = String(payload.card_status || payload.cardStatus || payload.status || '').trim();
-  return [
-    remaining !== undefined && remaining !== null && String(remaining).trim() !== ''
-      ? (total !== undefined && total !== null && String(total).trim() !== '' ? `余额 ${remaining}/${total}` : `余额 ${remaining}`)
-      : '',
-    used !== undefined && used !== null && String(used).trim() !== '' ? `已用 ${used}` : '',
-    status ? `状态 ${status}` : '',
-  ].filter(Boolean).join('，');
-}
-
-async function refreshGpcCardBalance(state = {}, options = {}) {
-  const apiUrl = resolveGpcBaseUrl(state?.gpcBaseUrl || DEFAULT_GPC_BASE_URL);
-  const cardKey = normalizeGpcCardKey(state?.gpcCardKey || state?.cardKey || '');
-  if (!apiUrl) {
-    throw new Error('缺少 GPC 页面地址。');
-  }
-  if (!cardKey) {
-    throw new Error('缺少 GPC 卡密。');
-  }
-  if (!isGpcCardKeyFormat(cardKey)) {
-    throw new Error('GPC 卡密格式不正确，应类似 GPC-6C9F1A32-45734795-914E6F00。');
-  }
-  const requestUrl = buildGpcCardBalanceRequestUrl(apiUrl, cardKey);
-  if (!requestUrl) {
-    throw new Error('缺少 GPC 卡密查询接口。');
-  }
-
-  const response = await fetch(requestUrl, {
-    method: 'GET',
-    headers: { Accept: 'application/json' },
-  });
-  const rawText = await response.text();
-  let payload = {};
-  try {
-    payload = rawText ? JSON.parse(rawText) : {};
-  } catch {
-    payload = { raw: rawText };
-  }
-  const balancePayload = self.GpcUtils?.unwrapGpcResponse
-    ? self.GpcUtils.unwrapGpcResponse(payload)
-    : (payload?.data && typeof payload === 'object' ? payload.data : payload);
-  const balanceData = balancePayload && typeof balancePayload === 'object' && !Array.isArray(balancePayload)
-    ? balancePayload
-    : {};
-  const remainingUses = self.GpcUtils?.getGpcBalanceRemainingUses
-    ? self.GpcUtils.getGpcBalanceRemainingUses(balanceData)
-    : Math.max(0, Number(balanceData.remaining_uses ?? balanceData.remainingUses ?? balanceData.balance ?? balanceData.remaining) || 0);
-  const cardStatus = self.GpcUtils?.getGpcCardStatus
-    ? self.GpcUtils.getGpcCardStatus(balanceData)
-    : String(balanceData.status || balanceData.card_status || balanceData.cardStatus || '').trim();
-  const balanceText = formatGpcCardBalancePayload(payload) || rawText || '未知';
-  const updates = {
-    gpcCardKey: cardKey,
-    gpcBalance: balanceText,
-    gpcBalancePayload: Object.keys(balanceData).length > 0 ? balanceData : { raw: String(balancePayload || '') },
-    gpcBalanceUpdatedAt: Date.now(),
-    gpcBalanceError: '',
-    gpcRemainingUses: Math.max(0, Number(remainingUses) || 0),
-    gpcCardStatus: cardStatus,
-  };
-
-  const unifiedOk = self.GpcUtils?.isGpcUnifiedResponseOk
-    ? self.GpcUtils.isGpcUnifiedResponseOk(payload)
-    : true;
-  if (!response.ok || payload?.ok === false || !unifiedOk) {
-    const detail = self.GpcUtils?.extractGpcResponseErrorDetail
-      ? self.GpcUtils.extractGpcResponseErrorDetail(payload, response.status)
-      : (payload?.data?.detail || payload?.error || payload?.message || payload?.detail || `HTTP ${response.status}`);
-    const errorUpdates = { ...updates, gpcBalanceError: String(detail || 'GPC 卡密查询失败') };
-    await setPersistentSettings(errorUpdates);
-    broadcastDataUpdate(errorUpdates);
-    throw new Error(String(detail || 'GPC 卡密查询失败'));
-  }
-
-  await setPersistentSettings(updates);
-  broadcastDataUpdate(updates);
-  const reason = String(options?.reason || '').trim();
-  await addLog(
-    reason === 'round_success'
-      ? `GPC 卡密剩余次数已更新：${balanceText}`
-      : `GPC 卡密查询成功：${balanceText}`,
-    'info'
-  );
-  return {
-    balance: balanceText,
-    payload,
-    data: updates.gpcBalancePayload,
-    remainingUses: updates.gpcRemainingUses,
-    cardStatus: updates.gpcCardStatus,
-    updatedAt: updates.gpcBalanceUpdatedAt,
-  };
-}
-
 const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoRunController({
   addLog,
   appendAccountRunRecord: (...args) => appendAndBroadcastAccountRunRecord(...args),
@@ -12727,7 +12448,7 @@ const autoRunController = self.MultiPageBackgroundAutoRunController?.createAutoR
   isPhoneSmsPlatformRateLimitFailure,
   isPlusCheckoutNonFreeTrialFailure,
   isAutoRunTimerParkedError,
-  isGpcPageFlowEndedFailure,
+  isDuckDdgDailyLimitFailure,
   isKiroProxyFailure,
   isRestartCurrentAttemptError,
   isStep4Route405RecoveryLimitFailure,
@@ -13155,42 +12876,10 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
   let plusCheckoutRestartCount = 0;
   let step4RestartCount = 0;
   let emailSignupPhoneVerificationRestartCount = 0;
-  const normalizeAutoRunGpcCheckoutRestartCount = (value) => {
-    const normalizedCount = Math.floor(Number(value) || 0);
-    return normalizedCount > 0 ? normalizedCount : 0;
-  };
-  let gpcCheckoutRestartCount = 0;
-  const setAutoRunGpcCheckoutRestartCount = async (value) => {
-    const normalizedCount = normalizeAutoRunGpcCheckoutRestartCount(value);
-    if (gpcCheckoutRestartCount === normalizedCount) {
-      return normalizedCount;
-    }
-    gpcCheckoutRestartCount = normalizedCount;
-    await setState({ autoRunGpcCheckoutRestartCount: normalizedCount });
-    return normalizedCount;
-  };
-  const initialAutoRunState = await getState();
-  const initialPersistedGpcCheckoutRestartCount = normalizeAutoRunGpcCheckoutRestartCount(
-    initialAutoRunState?.autoRunGpcCheckoutRestartCount
-  );
-  gpcCheckoutRestartCount = continued ? initialPersistedGpcCheckoutRestartCount : 0;
-  if (!continued && initialPersistedGpcCheckoutRestartCount > 0) {
-    await setState({ autoRunGpcCheckoutRestartCount: 0 });
-  }
   const nodeIdleRestartCounts = new Map();
   let currentStartNodeId = String(startNodeId || '').trim();
   let continueCurrentAttempt = continued;
   const resolvedSignupMethod = await ensureResolvedSignupMethodForRun();
-  const normalizePlusPaymentMethodForRun = typeof normalizePlusPaymentMethod === 'function'
-    ? normalizePlusPaymentMethod
-    : (value) => (String(value || '').trim().toLowerCase() === 'gpc-helper' ? 'gpc-helper' : String(value || '').trim().toLowerCase());
-  const plusPaymentMethodGpcHelper = typeof PLUS_PAYMENT_METHOD_GPC_HELPER === 'string'
-    ? PLUS_PAYMENT_METHOD_GPC_HELPER
-    : 'gpc-helper';
-  const isGpcCheckoutState = (state = {}) => (
-    normalizePlusPaymentMethodForRun(state?.plusPaymentMethod) === plusPaymentMethodGpcHelper
-    || String(state?.plusCheckoutSource || '').trim() === plusPaymentMethodGpcHelper
-  );
   const getNodeStatusForNode = (state, nodeId) => (
     String(state?.nodeStatuses?.[nodeId] || 'pending').trim() || 'pending'
   );
@@ -13270,43 +12959,6 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
       return invalidateDownstreamAfterStepRestart(step, options);
     }
     return undefined;
-  };
-  const parkAutoRunCurrentAttemptByTimer = async (options = {}) => {
-    const {
-      currentRun = targetRun,
-      totalRunsForPlan = totalRuns,
-      attemptRunForPlan = attemptRuns,
-      countdownTitle = '',
-      countdownNote = '',
-      logMessage = '',
-      extraState = {},
-    } = options && typeof options === 'object' ? options : {};
-    const sessionIdForPlan = Math.max(
-      0,
-      Math.floor(Number(typeof autoRunSessionId !== 'undefined' ? autoRunSessionId : 0) || 0)
-    );
-    if (typeof persistAutoRunTimerPlan === 'function') {
-      const latestStateForPlan = await getState();
-      await persistAutoRunTimerPlan({
-        kind: AUTO_RUN_TIMER_KIND_BEFORE_RETRY,
-        fireAt: Date.now() + GPC_CHECKOUT_RESTART_COOLDOWN_MS,
-        mode: 'continue',
-        currentRun,
-        totalRuns: totalRunsForPlan,
-        attemptRun: attemptRunForPlan,
-        autoRunSessionId: sessionIdForPlan,
-        autoRunSkipFailures: Boolean(latestStateForPlan.autoRunSkipFailures),
-        roundSummaries: Array.isArray(latestStateForPlan.autoRunRoundSummaries)
-          ? latestStateForPlan.autoRunRoundSummaries
-          : [],
-        countdownTitle: countdownTitle || 'GPC 冷却中',
-        countdownNote: countdownNote || `第 ${currentRun}/${totalRunsForPlan} 轮第 ${attemptRunForPlan} 次尝试将在 30 秒后继续`,
-      }, extraState);
-    }
-    if (logMessage) {
-      await addLog(logMessage, 'warn');
-    }
-    throw buildAutoRunTimerParkedError(logMessage || '当前自动运行已进入定时等待。');
   };
   const restartCurrentNodeAfterIdle = async (nodeId, error) => {
     if (!isAutoRunStepIdleRestartError(error)) {
@@ -13533,12 +13185,6 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
     }
     try {
       await executeNodeAndWaitWithAutoRunIdleLogWatchdog(nodeId, getAutoRunNodeDelayMs(nodeId));
-      if (nodeId === 'plus-checkout-billing' && gpcCheckoutRestartCount > 0) {
-        const completedState = await getState();
-        if (isGpcCheckoutState(completedState)) {
-          await setAutoRunGpcCheckoutRestartCount(0);
-        }
-      }
       nodeIndex += 1;
     } catch (err) {
       attachFailedNode(err, nodeId, latestState);
@@ -13552,45 +13198,17 @@ async function runAutoSequenceFromNodeGraph(startNodeId, context = {}) {
 
       const step = getDisplayStepForNode(nodeId, latestState);
       const nodeExecutionKey = getNodeExecutionKey(nodeId, latestState);
-      const isGpcCheckoutStep = isGpcCheckoutState(latestState);
       if (isPlusCheckoutRestartStep(step, nodeExecutionKey, latestState)
         && isPlusCheckoutRestartRequiredFailure(err)) {
-        if (isGpcCheckoutStep) {
-          gpcCheckoutRestartCount = await setAutoRunGpcCheckoutRestartCount(gpcCheckoutRestartCount + 1);
-        } else {
-          plusCheckoutRestartCount += 1;
-        }
-        const checkoutRestartCount = isGpcCheckoutStep
-          ? gpcCheckoutRestartCount
-          : plusCheckoutRestartCount;
-        const checkoutLabel = isGpcCheckoutStep
-          ? 'GPC'
-          : 'Plus Checkout';
-        const recreateLabel = isGpcCheckoutStep
-          ? '重新准备 GPC 页面'
-          : '重新创建 Plus Checkout';
+        plusCheckoutRestartCount += 1;
         await addLog(
-          `节点 ${getNodeLabel(nodeId, latestState)}：检测到 ${checkoutLabel} 失败/卡住，准备回到节点 plus-checkout-create ${recreateLabel}（第 ${checkoutRestartCount} 次）。原因：${getErrorMessage(err)}`,
+          `节点 ${getNodeLabel(nodeId, latestState)}：检测到 Plus Checkout 失败/卡住，准备回到节点 plus-checkout-create 重新创建 Plus Checkout（第 ${plusCheckoutRestartCount} 次）。原因：${getErrorMessage(err)}`,
           'warn'
         );
         const checkoutResetAnchorNodeId = getPreviousNodeId('plus-checkout-create', latestState) || 'fill-profile';
         await invalidateDownstreamAfterAutoRunNodeRestart(checkoutResetAnchorNodeId, {
-          logLabel: `节点 ${nodeId} ${checkoutLabel}失败后准备回到 plus-checkout-create 重试（第 ${checkoutRestartCount} 次）`,
+          logLabel: `节点 ${nodeId} Plus Checkout失败后准备回到 plus-checkout-create 重试（第 ${plusCheckoutRestartCount} 次）`,
         });
-        if (
-          isGpcCheckoutStep
-          && checkoutRestartCount >= GPC_CHECKOUT_RESTART_COOLDOWN_TRIGGER_COUNT
-          && checkoutRestartCount % GPC_CHECKOUT_RESTART_COOLDOWN_TRIGGER_COUNT === 0
-        ) {
-          await parkAutoRunCurrentAttemptByTimer({
-            currentRun: targetRun,
-            totalRunsForPlan: totalRuns,
-            attemptRunForPlan: attemptRuns,
-            countdownTitle: 'GPC 冷却中',
-            countdownNote: `第 ${targetRun}/${totalRuns} 轮第 ${attemptRuns} 次尝试将在 30 秒后继续回到 plus-checkout-create`,
-            logMessage: `GPC 第 ${checkoutRestartCount} 次回到 plus-checkout-create 后仍未恢复，已进入 30 秒冷却，稍后继续当前尝试。`,
-          });
-        }
         nodeIndex = Math.max(0, getNodeIndex(await getState(), 'plus-checkout-create'));
         continue;
       }
@@ -13817,6 +13435,7 @@ const OPENAI_AUTH_INJECT_FILES = ['content/utils.js', 'content/operation-delay.j
 const KIRO_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/register-page.js'];
 const KIRO_DESKTOP_AUTHORIZE_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'shared/kiro-timeouts.js', 'content/utils.js', 'flows/kiro/content/desktop-authorize-page.js'];
 const GROK_REGISTER_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/register-page.js'];
+const GROK_SUB2API_OAUTH_INJECT_FILES = ['flows/openai/index.js', 'flows/kiro/index.js', 'flows/grok/index.js', 'flows/index.js', 'core/flow-kernel/flow-registry.js', 'core/flow-kernel/source-registry.js', 'content/utils.js', 'flows/grok/content/sub2api-oauth-page.js'];
 const panelBridge = self.MultiPageBackgroundPanelBridge?.createPanelBridge({
   chrome,
   addLog,
@@ -14242,6 +13861,23 @@ const sub2ApiSessionImportExecutor = self.MultiPageBackgroundSub2ApiSessionImpor
   completeNodeFromBackground,
   ensureContentScriptReadyOnTabUntilStopped,
   getTabId,
+  getStepIdByKeyForState,
+  isTabAlive,
+  normalizeSub2ApiUrl,
+  registerTab,
+  sendTabMessageUntilStopped,
+  sleepWithStop,
+  throwIfStopped,
+  waitForTabCompleteUntilStopped,
+  DEFAULT_SUB2API_GROUP_NAME,
+});
+const sub2ApiAgentIdentityImportExecutor = self.MultiPageBackgroundSub2ApiAgentIdentityImport?.createSub2ApiAgentIdentityImportExecutor({
+  addLog,
+  chrome,
+  completeNodeFromBackground,
+  ensureContentScriptReadyOnTabUntilStopped,
+  getTabId,
+  getStepIdByKeyForState,
   isTabAlive,
   normalizeSub2ApiUrl,
   registerTab,
@@ -14257,6 +13893,7 @@ const cpaSessionImportExecutor = self.MultiPageBackgroundCpaSessionImport?.creat
   completeNodeFromBackground,
   ensureContentScriptReadyOnTabUntilStopped,
   getTabId,
+  getStepIdByKeyForState,
   isTabAlive,
   registerTab,
   sendTabMessageUntilStopped,
@@ -14302,6 +13939,7 @@ const grokRegisterRunner = self.MultiPageBackgroundGrokRegisterRunner?.createGro
   registerTab,
   resolveSignupEmailForFlow,
   reuseOrCreateTab,
+  sendToContentScript,
   sendToContentScriptResilient,
   setPasswordState,
   setState,
@@ -14373,6 +14011,32 @@ const grokWebchat2ApiPublisher = self.MultiPageBackgroundGrokPublisherWebchat2Ap
   getState,
   setState,
 });
+const grok2ApiPublisher = self.MultiPageBackgroundGrokPublisherGrok2Api?.createGrok2ApiPublisher({
+  addLog,
+  completeNodeFromBackground,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getState,
+  setState,
+});
+const grokSub2ApiOAuthRunner = self.MultiPageBackgroundGrokSub2ApiOAuthRunner?.createGrokSub2ApiOAuthRunner({
+  addLog,
+  chrome,
+  completeNodeFromBackground,
+  ensureContentScriptReadyOnTab,
+  getState,
+  getTabId,
+  isTabAlive,
+  normalizeSub2ApiUrl,
+  registerTab,
+  reuseOrCreateTab,
+  sendToContentScriptResilient,
+  setState,
+  sleepWithStop,
+  throwIfStopped,
+  unregisterTab,
+  waitForTabStableComplete,
+  GROK_SUB2API_OAUTH_INJECT_FILES,
+});
 const openAiWebchatPublisher = self.MultiPageBackgroundOpenAiPublisherWebchat?.createOpenAiWebchatPublisher({
   addLog,
   broadcastDataUpdate,
@@ -14382,6 +14046,24 @@ const openAiWebchatPublisher = self.MultiPageBackgroundOpenAiPublisherWebchat?.c
   fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
   getState,
   getTabId,
+  getStepIdByKeyForState,
+  isTabAlive,
+  registerTab,
+  sendTabMessageUntilStopped,
+  setState,
+  sleepWithStop,
+  waitForTabCompleteUntilStopped,
+});
+const openAiChatgpt2ApiPublisher = self.MultiPageBackgroundOpenAiPublisherChatgpt2Api?.createOpenAiChatgpt2ApiPublisher({
+  addLog,
+  broadcastDataUpdate,
+  chrome,
+  completeNodeFromBackground,
+  ensureContentScriptReadyOnTabUntilStopped,
+  fetchImpl: typeof fetch === 'function' ? fetch.bind(globalThis) : null,
+  getState,
+  getTabId,
+  getStepIdByKeyForState,
   isTabAlive,
   registerTab,
   sendTabMessageUntilStopped,
@@ -14460,8 +14142,10 @@ const stepExecutorsByKey = {
   'paypal-approve': (state) => payPalApproveExecutor.executePayPalApprove(state),
   'plus-checkout-return': (state) => plusReturnConfirmExecutor.executePlusReturnConfirm(state),
   'sub2api-session-import': (state) => sub2ApiSessionImportExecutor.executeSub2ApiSessionImport(state),
+  'sub2api-agent-identity-import': (state) => sub2ApiAgentIdentityImportExecutor.executeSub2ApiAgentIdentityImport(state),
   'cpa-session-import': (state) => cpaSessionImportExecutor.executeCpaSessionImport(state),
   'openai-upload-session-to-webchat': (state) => openAiWebchatPublisher.executeOpenAiUploadSessionToWebchat(state),
+  'openai-upload-session-to-chatgpt2api': (state) => openAiChatgpt2ApiPublisher.executeOpenAiUploadSessionToChatgpt2Api(state),
   'oauth-login': (state) => step7Executor.executeStep7(state),
   'fetch-login-code': (state) => step8Executor.executeStep8(state),
   'post-login-phone-verification': (state) => step8Executor.executePostLoginPhoneVerification(state),
@@ -14487,6 +14171,9 @@ const stepExecutorsByKey = {
   'grok-submit-profile': (state) => grokRegisterRunner.executeGrokSubmitProfile(state),
   'grok-extract-sso-cookie': (state) => grokRegisterRunner.executeGrokExtractSsoCookie(state),
   'grok-upload-sso-to-webchat2api': (state) => grokWebchat2ApiPublisher.executeGrokUploadSsoToWebchat2Api(state),
+  'grok-upload-sso-to-grok2api': (state) => grok2ApiPublisher.executeGrokUploadSsoToGrok2Api(state),
+  'grok-start-sub2api-oauth': (state) => grokSub2ApiOAuthRunner.executeGrokStartSub2ApiOAuth(state),
+  'grok-complete-sub2api-oauth': (state) => grokSub2ApiOAuthRunner.executeGrokCompleteSub2ApiOAuth(state),
 };
 const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter({
   addLog,
@@ -14524,7 +14211,6 @@ const messageRouter = self.MultiPageBackgroundMessageRouter?.createMessageRouter
   executeNodeViaCompletionSignal,
   exportSettingsBundle,
   fetchGeneratedEmail,
-  refreshGpcCardBalance,
   finalizePhoneActivationAfterSuccessfulFlow,
   testKiroRsConnection: async (baseUrl, apiKey) => {
     if (typeof self.MultiPageBackgroundKiroPublisherKiroRs?.checkKiroRsConnection !== 'function') {

@@ -19,6 +19,7 @@ test('background imports shared source registry module', () => {
   assert.match(source, /flows\/grok\/workflow\.js/);
   assert.match(source, /flows\/grok\/background\/state\.js/);
   assert.match(source, /flows\/grok\/background\/register-runner\.js/);
+  assert.match(source, /flows\/grok\/background\/sub2api-oauth-runner\.js/);
   assert.match(source, /flows\/grok\/mail-rules\.js/);
 });
 
@@ -79,6 +80,10 @@ test('background injects shared Kiro timeout module before Kiro content scripts'
     source,
     /const GROK_REGISTER_INJECT_FILES = \['flows\/openai\/index\.js', 'flows\/kiro\/index\.js', 'flows\/grok\/index\.js', 'flows\/index\.js', 'core\/flow-kernel\/flow-registry\.js', 'core\/flow-kernel\/source-registry\.js', 'content\/utils\.js', 'flows\/grok\/content\/register-page\.js'\];/
   );
+  assert.match(
+    source,
+    /const GROK_SUB2API_OAUTH_INJECT_FILES = \['flows\/openai\/index\.js', 'flows\/kiro\/index\.js', 'flows\/grok\/index\.js', 'flows\/index\.js', 'core\/flow-kernel\/flow-registry\.js', 'core\/flow-kernel\/source-registry\.js', 'content\/utils\.js', 'flows\/grok\/content\/sub2api-oauth-page\.js'\];/
+  );
 });
 
 test('shared source registry exposes canonical Kiro sources and drivers', () => {
@@ -124,6 +129,20 @@ test('shared source registry exposes canonical Kiro sources and drivers', () => 
       hostname: 'grok.com',
     }),
     'grok-register-page'
+  );
+  assert.equal(
+    registry.detectSourceFromLocation({
+      url: 'https://auth.x.ai/oauth2/authorize?state=hidden',
+      hostname: 'auth.x.ai',
+    }),
+    'grok-sub2api-oauth-page'
+  );
+  assert.equal(
+    registry.detectSourceFromLocation({
+      url: 'https://accounts.x.ai/oauth2/consent?response_type=code',
+      hostname: 'accounts.x.ai',
+    }),
+    'grok-sub2api-oauth-page'
   );
   assert.equal(
     registry.detectSourceFromLocation({
@@ -198,5 +217,38 @@ test('shared source registry exposes canonical Kiro sources and drivers', () => 
   assert.equal(registry.driverAcceptsCommand('flows/grok/content/register-page', 'grok-submit-profile'), true);
   assert.equal(registry.driverAcceptsCommand('flows/grok/background/register-runner', 'grok-extract-sso-cookie'), true);
   assert.equal(registry.driverAcceptsCommand('flows/grok/background/publisher-webchat2api', 'grok-upload-sso-to-webchat2api'), true);
+  assert.equal(registry.driverAcceptsCommand('flows/grok/background/publisher-grok2api', 'grok-upload-sso-to-grok2api'), true);
+  assert.equal(registry.driverAcceptsCommand('flows/grok/content/sub2api-oauth-page', 'grok-complete-sub2api-oauth'), true);
+  assert.equal(registry.driverAcceptsCommand('flows/grok/background/sub2api-oauth-runner', 'grok-start-sub2api-oauth'), true);
   assert.equal(registry.driverAcceptsCommand('flows/openai/background/publisher-webchat', 'openai-upload-session-to-webchat'), true);
+  assert.equal(registry.driverAcceptsCommand('flows/openai/background/publisher-chatgpt2api', 'openai-upload-session-to-chatgpt2api'), true);
+});
+
+test('source detection prioritizes Plus checkout before generic OpenAI session pages', () => {
+  const registry = loadSourceRegistry();
+
+  assert.equal(registry.getSourceMeta('plus-checkout').detectionPriority, 200);
+  assert.equal(registry.getSourceMeta('openai-session').detectionPriority, 100);
+  assert.equal(
+    registry.detectSourceFromLocation({
+      url: 'https://chatgpt.com/checkout/openai_llc/cs_test',
+      hostname: 'chatgpt.com',
+    }),
+    'plus-checkout'
+  );
+  assert.equal(
+    registry.detectSourceFromLocation({
+      url: 'https://chatgpt.com/c/abc123',
+      hostname: 'chatgpt.com',
+    }),
+    'openai-session'
+  );
+  assert.equal(
+    registry.detectSourceFromLocation({
+      url: 'https://chat.openai.com/',
+      hostname: 'chat.openai.com',
+    }),
+    'openai-session'
+  );
+  assert.equal(registry.driverAcceptsCommand('openai-session', 'OPENAI_SESSION_GET_CURRENT'), true);
 });

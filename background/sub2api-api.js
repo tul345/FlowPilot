@@ -7,13 +7,19 @@
       normalizeSub2ApiUrl = (value) => value,
       DEFAULT_SUB2API_GROUP_NAME = 'codex',
       fetchImpl = (...args) => fetch(...args),
+      setTimeoutImpl = (...args) => setTimeout(...args),
+      clearTimeoutImpl = (...args) => clearTimeout(...args),
     } = deps;
 
     const DEFAULT_REDIRECT_URI = 'http://localhost:1455/auth/callback';
     const DEFAULT_PROXY_NAME = '';
-    const DEFAULT_CONCURRENCY = 10;
+    const DEFAULT_OPENAI_SUB2API_CONCURRENCY = 1;
+    const DEFAULT_GROK_SUB2API_CONCURRENCY = 1;
     const DEFAULT_PRIORITY = 1;
     const DEFAULT_RATE_MULTIPLIER = 1;
+    const GROK_OAUTH_AUTH_URL_PATH = '/api/v1/admin/grok/oauth/auth-url';
+    const GROK_OAUTH_CREATE_PATH = '/api/v1/admin/grok/oauth/create-from-oauth';
+    const GROK_OAUTH_CREATE_TIMEOUT_MS = 180000;
 
     function normalizeString(value = '') {
       return String(value || '').trim();
@@ -62,23 +68,88 @@
       return message || `SUB2API 请求失败（HTTP ${responseStatus}）：${path}`;
     }
 
+    function redactSensitiveText(value = '', secrets = []) {
+      let message = normalizeString(value);
+      for (const secret of secrets) {
+        const normalizedSecret = normalizeString(secret);
+        if (normalizedSecret) {
+          message = message.split(normalizedSecret).join('[redacted]');
+        }
+      }
+      return message
+        .replace(/Bearer\s+[^\s;,]+/gi, 'Bearer [redacted]')
+        .replace(/\beyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\b/g, '[redacted]')
+        .slice(0, 1000);
+    }
+
+    function createSub2ApiRequestError(message, metadata = {}) {
+      const error = new Error(normalizeString(message) || 'SUB2API 请求失败。');
+      if (Number.isFinite(Number(metadata.status))) {
+        error.status = Number(metadata.status);
+      }
+      if (metadata.code) {
+        error.code = metadata.code;
+      }
+      if (metadata.isTimeout) {
+        error.isTimeout = true;
+      }
+      if (metadata.isNetworkError) {
+        error.isNetworkError = true;
+      }
+      if (metadata.name) {
+        error.name = metadata.name;
+      }
+      return error;
+    }
+
+    function sanitizeSub2ApiRequestError(error, secrets = []) {
+      return createSub2ApiRequestError(
+        redactSensitiveText(error?.message || error, secrets),
+        {
+          status: error?.status,
+          code: error?.code,
+          isTimeout: error?.isTimeout,
+          isNetworkError: error?.isNetworkError,
+          name: error?.name,
+        }
+      );
+    }
+
     async function requestJson(origin, path, options = {}) {
       const controller = new AbortController();
       const timeoutMs = Math.max(1000, Math.floor(Number(options.timeoutMs) || 30000));
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      const timer = setTimeoutImpl(() => controller.abort(), timeoutMs);
+      const sensitiveValues = Array.isArray(options.sensitiveValues)
+        ? options.sensitiveValues
+        : [];
 
       try {
         const token = normalizeString(options.token);
-        const response = await fetchImpl(`${origin}${path}`, {
-          method: options.method || 'GET',
-          headers: {
-            Accept: 'application/json',
-            'Content-Type': 'application/json',
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          body: options.body === undefined ? undefined : JSON.stringify(options.body),
-          signal: controller.signal,
-        });
+        let response;
+        try {
+          response = await fetchImpl(`${origin}${path}`, {
+            method: options.method || 'GET',
+            headers: {
+              Accept: 'application/json',
+              'Content-Type': 'application/json',
+              ...(token ? { Authorization: `Bearer ${token}` } : {}),
+            },
+            body: options.body === undefined ? undefined : JSON.stringify(options.body),
+            signal: controller.signal,
+          });
+        } catch (error) {
+          if (error?.name === 'AbortError') {
+            throw createSub2ApiRequestError(`SUB2API 请求超时：${path}`, {
+              code: 'SUB2API_TIMEOUT',
+              isTimeout: true,
+            });
+          }
+          throw createSub2ApiRequestError(error?.message || `SUB2API 网络请求失败：${path}`, {
+            code: error?.code,
+            isNetworkError: true,
+            name: error?.name,
+          });
+        }
 
         const text = await response.text();
         let payload = null;
@@ -92,21 +163,30 @@
           if (Number(payload.code) === 0) {
             return payload.data;
           }
-          throw new Error(getSub2ApiErrorMessage(payload, response.status, path));
+          throw createSub2ApiRequestError(
+            getSub2ApiErrorMessage(payload, response.status, path),
+            { status: response.status }
+          );
         }
 
         if (!response.ok) {
-          throw new Error(getSub2ApiErrorMessage(payload, response.status, path));
+          throw createSub2ApiRequestError(
+            getSub2ApiErrorMessage(payload, response.status, path),
+            { status: response.status }
+          );
         }
 
         return payload;
       } catch (error) {
         if (error?.name === 'AbortError') {
-          throw new Error(`SUB2API 请求超时：${path}`);
+          throw createSub2ApiRequestError(`SUB2API 请求超时：${path}`, {
+            code: 'SUB2API_TIMEOUT',
+            isTimeout: true,
+          });
         }
-        throw error;
+        throw sanitizeSub2ApiRequestError(error, sensitiveValues);
       } finally {
-        clearTimeout(timer);
+        clearTimeoutImpl(timer);
       }
     }
 
@@ -140,7 +220,7 @@
       };
     }
 
-    function normalizeSub2ApiGroupNames(value) {
+    function normalizeSub2ApiGroupNames(value, options = {}) {
       const source = Array.isArray(value)
         ? value
         : String(value || '').split(/[\r\n,，;；]+/);
@@ -153,12 +233,17 @@
         seen.add(key);
         names.push(name);
       }
-      return names.length ? names : [DEFAULT_SUB2API_GROUP_NAME];
+      return names.length || options.fallbackToDefault === false
+        ? names
+        : [DEFAULT_SUB2API_GROUP_NAME];
     }
 
     async function getGroupsByNames(origin, token, groupNames, options = {}) {
       const targetNames = normalizeSub2ApiGroupNames(groupNames);
-      const groups = await requestJson(origin, '/api/v1/admin/groups/all', {
+      const requestedPlatform = normalizeString(options.platform).toLowerCase();
+      const targetPlatform = requestedPlatform || 'openai';
+      const query = requestedPlatform ? `?platform=${encodeURIComponent(requestedPlatform)}` : '';
+      const groups = await requestJson(origin, `/api/v1/admin/groups/all${query}`, {
         method: 'GET',
         token,
         timeoutMs: options.timeoutMs,
@@ -171,7 +256,7 @@
         const group = (Array.isArray(groups) ? groups : []).find((item) => {
           const itemName = normalizeString(item?.name).toLowerCase();
           if (!itemName || itemName !== normalized) return false;
-          return !item.platform || item.platform === 'openai';
+          return !item.platform || normalizeString(item.platform).toLowerCase() === targetPlatform;
         });
         if (group) {
           matched.push(group);
@@ -181,10 +266,162 @@
       }
 
       if (missing.length) {
-        throw new Error(`SUB2API 中未找到以下 openai 分组：${missing.join('、')}。`);
+        throw new Error(`SUB2API 中未找到以下 ${targetPlatform} 分组：${missing.join('、')}。`);
       }
 
       return matched;
+    }
+
+    function resolveGrokRuntimeState(state = {}) {
+      const canonical = state?.runtimeState?.flowState?.grok;
+      if (canonical && typeof canonical === 'object' && !Array.isArray(canonical)) {
+        return canonical;
+      }
+      const legacyCanonical = state?.flowState?.grok;
+      return legacyCanonical && typeof legacyCanonical === 'object' && !Array.isArray(legacyCanonical)
+        ? legacyCanonical
+        : {};
+    }
+
+    function resolveGrokRegistrationEmail(state = {}) {
+      const runtimeState = resolveGrokRuntimeState(state);
+      return normalizeString(runtimeState?.register?.email)
+        || normalizeString(state.grokEmail)
+        || normalizeString(state.email);
+    }
+
+    function normalizePositiveIds(values = []) {
+      if (!Array.isArray(values)) {
+        return [];
+      }
+      return Array.from(new Set(
+        values
+          .map((value) => Number(value))
+          .filter((value) => Number.isSafeInteger(value) && value > 0)
+      ));
+    }
+
+    function resolveConfiguredGrokGroupNames(state = {}) {
+      return normalizeSub2ApiGroupNames(
+        Array.isArray(state.sub2apiGroupNames) && state.sub2apiGroupNames.length
+          ? state.sub2apiGroupNames
+          : state.sub2apiGroupName,
+        { fallbackToDefault: false }
+      );
+    }
+
+    async function prepareGrokOAuth(state = {}, options = {}) {
+      const logLabel = normalizeString(options.logLabel) || 'Grok SUB2API OAuth';
+      const accountName = resolveGrokRegistrationEmail(state);
+      if (!accountName) {
+        throw new Error('缺少本轮 Grok 注册邮箱，无法创建 SUB2API 账号。');
+      }
+      const configuredGroupNames = resolveConfiguredGrokGroupNames(state);
+      if (!configuredGroupNames.length) {
+        throw new Error('请先添加 Grok SUB2API 分组。');
+      }
+
+      await logWithOptions(`${logLabel}：正在登录 SUB2API 并准备 OAuth 授权...`, 'info', options);
+      const { origin, token } = await loginSub2Api(state, options);
+      const groups = await getGroupsByNames(origin, token, configuredGroupNames, {
+        ...options,
+        platform: 'grok',
+      });
+      const groupIds = normalizePositiveIds(groups.map((group) => group?.id));
+      if (!groupIds.length) {
+        throw new Error('SUB2API 返回的 Grok 目标分组 ID 无效。');
+      }
+
+      const proxyPreference = resolveSub2ApiProxyPreference(state);
+      const proxy = proxyPreference
+        ? await resolveSub2ApiProxy(origin, token, proxyPreference, options)
+        : null;
+      const proxyId = normalizeProxyId(proxy?.id);
+      const authData = await requestJson(origin, GROK_OAUTH_AUTH_URL_PATH, {
+        method: 'POST',
+        token,
+        timeoutMs: options.timeoutMs,
+        body: proxyId ? { proxy_id: proxyId } : {},
+      });
+      const authUrl = normalizeString(authData?.auth_url || authData?.authUrl);
+      const sessionId = normalizeString(authData?.session_id || authData?.sessionId);
+      const oauthState = normalizeString(authData?.state);
+      if (!authUrl || !sessionId || !oauthState) {
+        throw new Error('SUB2API OAuth 授权地址响应缺少 auth_url、session_id 或 state。');
+      }
+      try {
+        const parsed = new URL(authUrl);
+        if (parsed.protocol !== 'https:' || !parsed.hostname.endsWith('.x.ai')) {
+          throw new Error('invalid host');
+        }
+      } catch {
+        throw new Error('SUB2API 返回的 Grok OAuth 授权地址无效。');
+      }
+
+      return {
+        accountName,
+        authUrl,
+        groupIds,
+        origin,
+        proxyId,
+        sessionId,
+        state: oauthState,
+        targetUrl: `${origin}${GROK_OAUTH_AUTH_URL_PATH}`,
+      };
+    }
+
+    async function createGrokAccountFromOAuth(state = {}, oauthContext = {}, code = '', options = {}) {
+      const logLabel = normalizeString(options.logLabel) || 'Grok SUB2API OAuth';
+      const accountName = resolveGrokRegistrationEmail(state);
+      const authorizationCode = normalizeString(code);
+      const sessionId = normalizeString(oauthContext?.sessionId || oauthContext?.session_id);
+      const oauthState = normalizeString(oauthContext?.state);
+      const groupIds = normalizePositiveIds(oauthContext?.groupIds || oauthContext?.group_ids);
+      const proxyId = normalizeProxyId(oauthContext?.proxyId ?? oauthContext?.proxy_id);
+      const accountPriority = resolveSub2ApiAccountPriority(state);
+
+      if (!accountName) {
+        throw new Error('缺少本轮 Grok 注册邮箱，无法创建 SUB2API 账号。');
+      }
+      if (!authorizationCode) {
+        throw new Error('缺少 Grok OAuth 授权码，无法创建 SUB2API 账号。');
+      }
+      if (!sessionId || !oauthState) {
+        throw new Error('缺少 SUB2API OAuth session_id 或 state，请重新获取授权地址。');
+      }
+      if (!groupIds.length) {
+        throw new Error('缺少 SUB2API Grok 目标分组，请重新获取授权地址。');
+      }
+
+      const { origin, token } = await loginSub2Api(state, options);
+      const payload = {
+        session_id: sessionId,
+        state: oauthState,
+        code: authorizationCode,
+        name: accountName,
+        ...(proxyId ? { proxy_id: proxyId } : {}),
+        group_ids: groupIds,
+        concurrency: DEFAULT_GROK_SUB2API_CONCURRENCY,
+        priority: accountPriority,
+      };
+      await logWithOptions(`${logLabel}：正在创建 Grok OAuth 账号...`, 'info', options);
+      const account = await requestJson(origin, GROK_OAUTH_CREATE_PATH, {
+        method: 'POST',
+        token,
+        timeoutMs: options.createTimeoutMs || GROK_OAUTH_CREATE_TIMEOUT_MS,
+        body: payload,
+      });
+      if (!account || typeof account !== 'object' || !Number.isSafeInteger(Number(account.id)) || Number(account.id) <= 0) {
+        throw new Error('SUB2API OAuth 创建接口未返回有效账号。');
+      }
+
+      const verifiedStatus = `SUB2API 已创建 Grok OAuth 账号：${accountName}。`;
+      await logWithOptions(verifiedStatus, 'ok', options);
+      return {
+        account,
+        targetUrl: `${origin}${GROK_OAUTH_CREATE_PATH}`,
+        verifiedStatus,
+      };
     }
 
     function normalizeSub2ApiProxyPreference(value) {
@@ -432,6 +669,58 @@
       throw new Error('未读取到可导入的 ChatGPT 会话或 accessToken。');
     }
 
+    function serializeCodexAuth(authJson) {
+      if (typeof authJson === 'string') {
+        const content = normalizeString(authJson);
+        if (content) {
+          return content;
+        }
+      } else if (authJson && typeof authJson === 'object' && !Array.isArray(authJson)) {
+        return JSON.stringify(authJson);
+      }
+      throw new Error('SUB2API 导入内容格式无效。');
+    }
+
+    function collectCodexAuthSecrets(authJson, serializedContent = '') {
+      const secrets = new Set();
+      const addSecret = (value) => {
+        const normalized = normalizeString(value);
+        if (normalized) {
+          secrets.add(normalized);
+        }
+      };
+      const visited = new Set();
+      const visit = (value) => {
+        if (!value || typeof value !== 'object' || visited.has(value)) {
+          return;
+        }
+        visited.add(value);
+        for (const [key, child] of Object.entries(value)) {
+          if (typeof child === 'string' && /(token|private[_-]?key|authorization)/i.test(key)) {
+            addSecret(child);
+          } else if (child && typeof child === 'object') {
+            visit(child);
+          }
+        }
+      };
+
+      if (typeof authJson === 'string') {
+        addSecret(authJson);
+        try {
+          visit(JSON.parse(authJson));
+        } catch (_error) {
+          // Raw access tokens are valid codex-session import content.
+        }
+      } else if (authJson && typeof authJson === 'object') {
+        visit(authJson);
+      }
+
+      if (normalizeString(serializedContent).length >= 20) {
+        addSecret(serializedContent);
+      }
+      return Array.from(secrets);
+    }
+
     function resolveCodexSessionImportExpiresAt(session) {
       const sessionObject = normalizeCodexSessionObject(session);
       const expiresValue = normalizeString(sessionObject?.expires);
@@ -445,32 +734,41 @@
       return Math.floor(expiresAtMs / 1000);
     }
 
-    function normalizeCodexSessionImportMessages(messages) {
+    function normalizeCodexSessionImportMessages(messages, sensitiveValues = []) {
       return (Array.isArray(messages) ? messages : [])
         .map((item, index) => ({
           index: Number(item?.index) || index + 1,
-          name: normalizeString(item?.name),
-          message: normalizeString(item?.message),
+          name: redactSensitiveText(item?.name, sensitiveValues),
+          message: redactSensitiveText(item?.message, sensitiveValues),
         }))
         .filter((item) => item.message);
     }
 
-    function normalizeCodexSessionImportResult(result) {
+    function normalizeCodexSessionImportResult(result, sensitiveValues = []) {
       return {
         total: Math.max(0, Number(result?.total) || 0),
         created: Math.max(0, Number(result?.created) || 0),
         updated: Math.max(0, Number(result?.updated) || 0),
         skipped: Math.max(0, Number(result?.skipped) || 0),
         failed: Math.max(0, Number(result?.failed) || 0),
-        items: Array.isArray(result?.items) ? result.items : [],
-        warnings: normalizeCodexSessionImportMessages(result?.warnings),
-        errors: normalizeCodexSessionImportMessages(result?.errors),
+        items: (Array.isArray(result?.items) ? result.items : []).map((item) => ({
+          ...item,
+          ...(item?.name !== undefined
+            ? { name: redactSensitiveText(item.name, sensitiveValues) }
+            : {}),
+          ...(item?.message !== undefined
+            ? { message: redactSensitiveText(item.message, sensitiveValues) }
+            : {}),
+        })),
+        warnings: normalizeCodexSessionImportMessages(result?.warnings, sensitiveValues),
+        errors: normalizeCodexSessionImportMessages(result?.errors, sensitiveValues),
       };
     }
 
-    function buildCodexSessionImportSummary(result) {
+    function buildCodexSessionImportSummary(result, resultLabel = 'SUB2API 会话导入完成') {
       const normalized = normalizeCodexSessionImportResult(result);
-      return `SUB2API 会话导入完成：新建 ${normalized.created}，更新 ${normalized.updated}，跳过 ${normalized.skipped}，失败 ${normalized.failed}`;
+      const label = normalizeString(resultLabel) || 'SUB2API 会话导入完成';
+      return `${label}：新建 ${normalized.created}，更新 ${normalized.updated}，跳过 ${normalized.skipped}，失败 ${normalized.failed}`;
     }
 
     function getCodexSessionImportFailureMessage(result) {
@@ -690,7 +988,7 @@
         platform: 'openai',
         type: 'oauth',
         credentials,
-        concurrency: DEFAULT_CONCURRENCY,
+        concurrency: DEFAULT_OPENAI_SUB2API_CONCURRENCY,
         priority: accountPriority,
         rate_multiplier: DEFAULT_RATE_MULTIPLIER,
         group_ids: groupIds,
@@ -719,18 +1017,9 @@
       };
     }
 
-    async function importCurrentChatGptSession(state = {}, options = {}) {
+    async function prepareCodexSessionImport(state = {}, options = {}) {
       const logLabel = normalizeString(options.logLabel) || 'SUB2API 会话导入';
-      const session = normalizeCodexSessionObject(state?.session);
-      const accessToken = normalizeString(
-        state?.accessToken
-        || session?.accessToken
-      );
-      const importContent = buildCodexSessionImportContent(session, accessToken);
-      const importExpiresAt = resolveCodexSessionImportExpiresAt(session);
-      const preferredAccountName = resolveCodexSessionImportAccountName(state, session, accessToken);
-
-      await logWithOptions(`${logLabel}：正在通过 SUB2API 管理接口登录并准备导入当前 ChatGPT 会话...`, 'info', options);
+      await logWithOptions(`${logLabel}：正在通过 SUB2API 管理接口登录并准备 Codex 凭据导入...`, 'info', options);
       const { origin, token } = await loginSub2Api(state, options);
       const groupNames = state.sub2apiGroupName || DEFAULT_SUB2API_GROUP_NAME;
       const groups = await getGroupsByNames(origin, token, groupNames, options);
@@ -739,6 +1028,12 @@
       const proxy = proxyPreference ? await resolveSub2ApiProxy(origin, token, proxyPreference, options) : null;
       const proxyId = normalizeProxyId(proxy?.id);
       const accountPriority = resolveSub2ApiAccountPriority(state);
+      const groupIds = groups
+        .map((group) => Number(group?.id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (!groupIds.length) {
+        throw new Error('SUB2API 返回的目标分组 ID 无效。');
+      }
 
       await logWithOptions(`${logLabel}：已登录 SUB2API，使用分组 ${groupLabel}。`, 'info', options);
       if (proxy) {
@@ -747,33 +1042,74 @@
         await logWithOptions(`${logLabel}：未配置 SUB2API 默认代理，本次将不使用代理。`, 'info', options);
       }
 
-      const importPayload = {
-        content: importContent,
-        group_ids: groups
-          .map((group) => Number(group?.id))
-          .filter((id) => Number.isFinite(id) && id > 0),
-        ...(preferredAccountName ? { name: preferredAccountName } : {}),
-        priority: accountPriority,
-        auto_pause_on_expired: true,
-        update_existing: true,
+      return {
+        origin,
+        token,
+        groupIds,
+        proxyId,
+        accountPriority,
       };
-      if (!importPayload.group_ids.length) {
+    }
+
+    function buildCodexSessionImportPayload(prepared = {}, input = {}) {
+      const authContent = serializeCodexAuth(input.authJson);
+      const groupIds = (Array.isArray(prepared.groupIds) ? prepared.groupIds : [])
+        .map((id) => Number(id))
+        .filter((id) => Number.isFinite(id) && id > 0);
+      if (!groupIds.length) {
         throw new Error('SUB2API 返回的目标分组 ID 无效。');
       }
-      if (proxyId) {
-        importPayload.proxy_id = proxyId;
-      }
-      if (importExpiresAt) {
-        importPayload.expires_at = importExpiresAt;
+
+      const accountPriority = Number(prepared.accountPriority);
+      if (!Number.isSafeInteger(accountPriority) || accountPriority < 1) {
+        throw new Error('SUB2API 账号优先级必须是大于等于 1 的整数。');
       }
 
-      await logWithOptions(`${logLabel}：正在导入当前 ChatGPT 会话到 SUB2API...`, 'info', options);
-      const importResult = normalizeCodexSessionImportResult(await requestJson(origin, '/api/v1/admin/accounts/import/codex-session', {
-        method: 'POST',
-        token,
-        timeoutMs: options.importTimeoutMs || options.timeoutMs,
-        body: importPayload,
-      }));
+      const accountName = normalizeString(input.accountName);
+      const proxyId = normalizeProxyId(prepared.proxyId);
+      const expiresAt = Number(input.expiresAt);
+      return {
+        payload: {
+          content: authContent,
+          group_ids: groupIds,
+          ...(accountName ? { name: accountName } : {}),
+          concurrency: DEFAULT_OPENAI_SUB2API_CONCURRENCY,
+          priority: accountPriority,
+          auto_pause_on_expired: true,
+          update_existing: true,
+          ...(proxyId ? { proxy_id: proxyId } : {}),
+          ...(Number.isFinite(expiresAt) && expiresAt > 0
+            ? { expires_at: Math.floor(expiresAt) }
+            : {}),
+        },
+        sensitiveValues: collectCodexAuthSecrets(input.authJson, authContent),
+      };
+    }
+
+    async function importPreparedCodexAuth(prepared = {}, input = {}, options = {}) {
+      const origin = normalizeString(prepared.origin);
+      const token = normalizeString(prepared.token);
+      if (!origin || !token) {
+        throw new Error('SUB2API Codex 导入预检结果无效，请重新执行当前步骤。');
+      }
+
+      const logLabel = normalizeString(options.logLabel) || 'SUB2API 会话导入';
+      const resultLabel = normalizeString(options.resultLabel) || 'SUB2API 会话导入完成';
+      const { payload, sensitiveValues } = buildCodexSessionImportPayload(prepared, input);
+      const requestSensitiveValues = [token, ...sensitiveValues];
+
+      await logWithOptions(`${logLabel}：正在向 SUB2API 导入 Codex 凭据...`, 'info', options);
+      const importResult = normalizeCodexSessionImportResult(await requestJson(
+        origin,
+        '/api/v1/admin/accounts/import/codex-session',
+        {
+          method: 'POST',
+          token,
+          timeoutMs: options.importTimeoutMs || options.timeoutMs,
+          body: payload,
+          sensitiveValues: requestSensitiveValues,
+        }
+      ), requestSensitiveValues);
 
       for (const warning of importResult.warnings) {
         await logWithOptions(`${logLabel}：${warning.message}`, 'warn', options);
@@ -786,7 +1122,7 @@
         throw new Error(getCodexSessionImportFailureMessage(importResult));
       }
 
-      const verifiedStatus = buildCodexSessionImportSummary(importResult);
+      const verifiedStatus = buildCodexSessionImportSummary(importResult, resultLabel);
       await logWithOptions(verifiedStatus, 'ok', options);
       return {
         verifiedStatus,
@@ -798,6 +1134,23 @@
       };
     }
 
+    async function importCurrentChatGptSession(state = {}, options = {}) {
+      const session = normalizeCodexSessionObject(state?.session);
+      const accessToken = normalizeString(
+        state?.accessToken
+        || session?.accessToken
+      );
+      const authJson = buildCodexSessionImportContent(session, accessToken);
+      const accountName = resolveCodexSessionImportAccountName(state, session, accessToken);
+      const expiresAt = resolveCodexSessionImportExpiresAt(session);
+      const prepared = await prepareCodexSessionImport(state, options);
+      return importPreparedCodexAuth(prepared, {
+        authJson,
+        accountName,
+        expiresAt,
+      }, options);
+    }
+
     return {
       buildDraftAccountName,
       buildCodexSessionImportContent,
@@ -807,6 +1160,10 @@
       extractStateFromAuthUrl,
       generateOpenAiAuthUrl,
       getGroupsByNames,
+      prepareGrokOAuth,
+      prepareCodexSessionImport,
+      createGrokAccountFromOAuth,
+      importPreparedCodexAuth,
       importCurrentChatGptSession,
       loginSub2Api,
       normalizeProxyId,
@@ -816,6 +1173,7 @@
       requestJson,
       resolveSub2ApiAccountPriority,
       resolveSub2ApiProxy,
+      resolveGrokRegistrationEmail,
       submitOpenAiCallback,
     };
   }

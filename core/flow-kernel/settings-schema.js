@@ -49,6 +49,7 @@
   function createSettingsSchema(deps = {}) {
     const rootScope = typeof self !== 'undefined' ? self : globalThis;
     const flowRegistry = deps.flowRegistry || rootScope.MultiPageFlowRegistry || {};
+    const accountDeliveryApi = deps.accountDelivery || rootScope.MultiPageOpenAiAccountDelivery || {};
     const defaultFlowId = String(
       deps.defaultFlowId || flowRegistry.DEFAULT_FLOW_ID || 'openai'
     ).trim().toLowerCase() || 'openai';
@@ -76,17 +77,127 @@
     const getTargetDefinitions = typeof flowRegistry.getTargetDefinitions === 'function'
       ? flowRegistry.getTargetDefinitions
       : (() => ({}));
+    const getTargetCapabilities = typeof flowRegistry.getTargetCapabilities === 'function'
+      ? flowRegistry.getTargetCapabilities
+      : ((_flowId, targetId) => getTargetDefinitions('openai')?.[targetId]?.capabilities || {});
+    const legacyMigrationStorageKeys = Object.freeze([
+      'plusAccountAccessStrategy',
+      'sub2apiImportMode',
+    ]);
 
-    const normalizePlusAccountAccessStrategy = (value = '') => {
+    function removeLegacyAccountDeliveryFields(value = {}) {
+      const next = isPlainObject(value) ? cloneValue(value) : {};
+      legacyMigrationStorageKeys.forEach((key) => {
+        delete next[key];
+      });
+      return next;
+    }
+
+    const normalizePlusPaymentMethod = (value = '') => {
       const normalized = String(value || '').trim().toLowerCase();
-      if (normalized === 'sub2api_codex_session') {
-        return 'sub2api_codex_session';
+      if (normalized === 'paypal-hosted') {
+        return 'paypal-hosted';
       }
-      if (normalized === 'cpa_codex_session') {
-        return 'cpa_codex_session';
+      if (normalized === 'none') {
+        return 'none';
       }
-      return 'oauth';
+      return 'paypal';
     };
+
+    function getSupportedAccountDeliveryModes(targetId = '') {
+      const capabilities = getTargetCapabilities('openai', targetId) || {};
+      const values = Array.isArray(capabilities.supportedAccountDeliveryModes)
+        ? capabilities.supportedAccountDeliveryModes
+        : ['oauth'];
+      const seen = new Set();
+      const modes = values
+        .map((value) => String(value || '').trim().toLowerCase())
+        .filter((value) => {
+          if (!value || seen.has(value)) {
+            return false;
+          }
+          if (
+            typeof accountDeliveryApi.isAccountDeliveryMode === 'function'
+            && !accountDeliveryApi.isAccountDeliveryMode(value)
+          ) {
+            return false;
+          }
+          seen.add(value);
+          return true;
+        });
+      return modes.length ? modes : ['oauth'];
+    }
+
+    function getDefaultAccountDeliveryMode(targetId = '') {
+      const supportedModes = getSupportedAccountDeliveryModes(targetId);
+      const configuredDefault = String(
+        getTargetCapabilities('openai', targetId)?.defaultAccountDeliveryMode || ''
+      ).trim().toLowerCase();
+      return supportedModes.includes(configuredDefault)
+        ? configuredDefault
+        : supportedModes[0];
+    }
+
+    function normalizeAccountDeliveryModeForTarget(targetId = '', value = '') {
+      const supportedModes = getSupportedAccountDeliveryModes(targetId);
+      const normalized = String(value || '').trim().toLowerCase();
+      return supportedModes.includes(normalized)
+        ? normalized
+        : getDefaultAccountDeliveryMode(targetId);
+    }
+
+    function getOwnValue(source = {}, key = '') {
+      return isPlainObject(source) && Object.prototype.hasOwnProperty.call(source, key)
+        ? source[key]
+        : undefined;
+    }
+
+    function resolveLegacyAccountDeliveryMode(targetId = '', input = {}, nested = {}, currentFlow = {}) {
+      const nestedOpenAi = isPlainObject(nested?.flows?.openai) ? nested.flows.openai : {};
+      const nestedTarget = isPlainObject(nestedOpenAi?.targets?.[targetId])
+        ? nestedOpenAi.targets[targetId]
+        : {};
+      const selectedTargetId = normalizeTargetId(
+        'openai',
+        currentFlow?.selectedTargetId,
+        defaultOpenAiTargetId
+      );
+      const canonicalValue = getOwnValue(nestedTarget, 'accountDeliveryMode')
+        ?? (selectedTargetId === targetId ? getOwnValue(input, 'accountDeliveryMode') : undefined);
+      if (canonicalValue !== undefined) {
+        return normalizeAccountDeliveryModeForTarget(targetId, canonicalValue);
+      }
+
+      const legacyImportMode = getOwnValue(input, 'sub2apiImportMode')
+        ?? getOwnValue(nestedOpenAi, 'sub2apiImportMode')
+        ?? getOwnValue(nestedOpenAi.plus, 'sub2apiImportMode');
+      if (legacyImportMode !== undefined) {
+        return targetId === 'sub2api'
+          && String(legacyImportMode || '').trim().toLowerCase() === 'agent_identity'
+          ? normalizeAccountDeliveryModeForTarget(targetId, 'agent_identity')
+          : getDefaultAccountDeliveryMode(targetId);
+      }
+
+      const legacyStrategy = getOwnValue(input, 'plusAccountAccessStrategy')
+        ?? getOwnValue(nestedOpenAi, 'plusAccountAccessStrategy')
+        ?? getOwnValue(nestedOpenAi.plus, 'plusAccountAccessStrategy');
+      if (legacyStrategy !== undefined) {
+        const normalizedStrategy = String(legacyStrategy || '').trim().toLowerCase();
+        if (targetId === 'sub2api' && normalizedStrategy === 'sub2api_codex_session') {
+          return normalizeAccountDeliveryModeForTarget(targetId, 'session');
+        }
+        if (targetId === 'cpa' && normalizedStrategy === 'cpa_codex_session') {
+          return normalizeAccountDeliveryModeForTarget(targetId, 'session');
+        }
+        return getDefaultAccountDeliveryMode(targetId);
+      }
+
+      return getDefaultAccountDeliveryMode(targetId);
+    }
+
+    function getLegacyMigrationStorageKeys() {
+      return [...legacyMigrationStorageKeys];
+    }
 
     const normalizeCustomMailHelperBaseUrl = (value = '') => {
       const fallback = 'http://127.0.0.1:17374';
@@ -195,8 +306,11 @@
 
     function buildDefaultSettingsState() {
       return {
-        schemaVersion: 5,
+        schemaVersion: 6,
         activeFlowId: defaultFlowId,
+        ui: {
+          language: 'auto',
+        },
         services: {
           account: {
             customPassword: '',
@@ -287,8 +401,42 @@
       };
     }
 
+    function resolveSharedSub2ApiCredentials(input = {}, nested = {}, openAiFlow = {}, grokFlow = {}) {
+      const openAiTarget = isPlainObject(openAiFlow?.targets?.sub2api)
+        ? openAiFlow.targets.sub2api
+        : {};
+      const grokTarget = isPlainObject(grokFlow?.targets?.sub2api)
+        ? grokFlow.targets.sub2api
+        : {};
+      const openAiLegacyTarget = getTargetValue(
+        nested,
+        (state) => state.flows?.openai?.integrationTargets?.sub2api,
+        null,
+        {}
+      );
+      const normalizeValue = (value, trim = true) => trim
+        ? String(value ?? '').trim()
+        : String(value ?? '');
+      const pick = (key, trim = true) => {
+        if (Object.prototype.hasOwnProperty.call(input || {}, key)) {
+          return normalizeValue(input[key], trim);
+        }
+        return [openAiTarget, grokTarget, openAiLegacyTarget]
+          .map((source) => normalizeValue(source?.[key], trim))
+          .find(Boolean) || '';
+      };
+      return {
+        sub2apiUrl: pick('sub2apiUrl'),
+        sub2apiEmail: pick('sub2apiEmail'),
+        sub2apiPassword: pick('sub2apiPassword', false),
+      };
+    }
+
     function normalizeFlowTargetState(flowId, targetId, nested = {}, defaults = {}) {
-      const targetState = mergePlainObjects(defaults, nested);
+      const mergedTargetState = mergePlainObjects(defaults, nested);
+      const targetState = flowId === 'openai'
+        ? removeLegacyAccountDeliveryFields(mergedTargetState)
+        : mergedTargetState;
       if (flowId === 'openai' && targetId === 'cpa') {
         return {
           ...targetState,
@@ -318,7 +466,7 @@
           codex2apiAdminKey: String(targetState.codex2apiAdminKey ?? '').trim(),
         };
       }
-      if (flowId === 'openai' && targetId === 'webchat') {
+      if (flowId === 'openai' && (targetId === 'webchat' || targetId === 'chatgpt2api')) {
         return {
           ...targetState,
           baseUrl: String(targetState.baseUrl ?? '').trim(),
@@ -332,11 +480,33 @@
           apiKey: String(targetState.apiKey ?? ''),
         };
       }
-      if (flowId === 'grok' && targetId === 'webchat2api') {
+      if (flowId === 'grok' && (targetId === 'webchat2api' || targetId === 'grok2api')) {
         return {
           ...targetState,
           baseUrl: String(targetState.baseUrl ?? '').trim(),
-          apiKey: String(targetState.apiKey ?? ''),
+          apiKey: String(targetState.apiKey ?? '').trim(),
+        };
+      }
+      if (flowId === 'grok' && targetId === 'sub2api') {
+        const {
+          webchat2apiUploadEnabled: legacyWebchat2ApiUploadEnabled,
+          ...currentTargetState
+        } = targetState;
+        return {
+          ...currentTargetState,
+          sub2apiUrl: String(targetState.sub2apiUrl ?? '').trim(),
+          sub2apiEmail: String(targetState.sub2apiEmail ?? '').trim(),
+          sub2apiPassword: String(targetState.sub2apiPassword ?? ''),
+          sub2apiGroupName: String(targetState.sub2apiGroupName ?? '').trim(),
+          sub2apiGroupNames: Array.isArray(targetState.sub2apiGroupNames)
+            ? targetState.sub2apiGroupNames.map((entry) => String(entry || '').trim()).filter(Boolean)
+            : [],
+          sub2apiAccountPriority: Math.max(1, Number(targetState.sub2apiAccountPriority) || 1),
+          sub2apiDefaultProxyName: String(targetState.sub2apiDefaultProxyName ?? '').trim(),
+          grok2apiUploadEnabled: Boolean(
+            targetState.grok2apiUploadEnabled
+            ?? legacyWebchat2ApiUploadEnabled
+          ),
         };
       }
       return targetState;
@@ -368,7 +538,13 @@
         ?? defaults.activeFlowId,
         defaults.activeFlowId
       );
-      const mergedFlow = mergePlainObjects(defaults.flows?.[flowId] || buildDefaultFlowSettings(flowId), nestedFlow);
+      const mergedFlowState = mergePlainObjects(
+        defaults.flows?.[flowId] || buildDefaultFlowSettings(flowId),
+        nestedFlow
+      );
+      const mergedFlow = flowId === 'openai'
+        ? removeLegacyAccountDeliveryFields(mergedFlowState)
+        : mergedFlowState;
       const defaultTargetId = defaults.flows?.[flowId]?.selectedTargetId || getDefaultTargetId(flowId);
       const selectedTargetId = normalizeTargetId(
         flowId,
@@ -413,6 +589,7 @@
       const defaultOpenAiPlus = isPlainObject(defaultOpenAiFlow.plus)
         ? defaultOpenAiFlow.plus
         : {};
+      const sharedSub2ApiCredentials = resolveSharedSub2ApiCredentials(input, nested, currentFlow, grokFlow);
       const cpaSource = {
         ...currentFlow.targets.cpa,
         ...getTargetValue(
@@ -433,9 +610,7 @@
           null,
           {}
         ),
-        sub2apiUrl: input?.sub2apiUrl ?? currentFlow.targets.sub2api.sub2apiUrl,
-        sub2apiEmail: input?.sub2apiEmail ?? currentFlow.targets.sub2api.sub2apiEmail,
-        sub2apiPassword: input?.sub2apiPassword ?? currentFlow.targets.sub2api.sub2apiPassword,
+        ...sharedSub2ApiCredentials,
         sub2apiGroupName: input?.sub2apiGroupName ?? currentFlow.targets.sub2api.sub2apiGroupName,
         sub2apiGroupNames: input?.sub2apiGroupNames ?? currentFlow.targets.sub2api.sub2apiGroupNames,
         sub2apiAccountPriority: input?.sub2apiAccountPriority ?? currentFlow.targets.sub2api.sub2apiAccountPriority,
@@ -464,15 +639,49 @@
         baseUrl: sharedWebchatConfig.baseUrl,
         apiKey: sharedWebchatConfig.apiKey,
       };
+      const chatgpt2ApiCurrent = isPlainObject(currentFlow.targets.chatgpt2api)
+        ? currentFlow.targets.chatgpt2api
+        : {};
+      const chatgpt2ApiSource = {
+        ...chatgpt2ApiCurrent,
+        ...getTargetValue(
+          nested,
+          (state) => state.flows?.openai?.integrationTargets?.chatgpt2api,
+          null,
+          {}
+        ),
+        baseUrl: input?.openaiChatgpt2ApiUrl ?? chatgpt2ApiCurrent.baseUrl,
+        apiKey: input?.openaiChatgpt2ApiAdminKey ?? chatgpt2ApiCurrent.apiKey,
+      };
+      const targetSources = {
+        cpa: cpaSource,
+        sub2api: sub2apiSource,
+        codex2api: codex2apiSource,
+        webchat: webchatSource,
+        chatgpt2api: chatgpt2ApiSource,
+      };
+      const targets = {
+        ...currentFlow.targets,
+      };
+      Object.entries(targetSources).forEach(([targetId, source]) => {
+        targets[targetId] = {
+          ...normalizeFlowTargetState(
+            'openai',
+            targetId,
+            source,
+            defaultOpenAiTargets[targetId] || {}
+          ),
+          accountDeliveryMode: resolveLegacyAccountDeliveryMode(
+            targetId,
+            input,
+            nested,
+            currentFlow
+          ),
+        };
+      });
       return {
         ...currentFlow,
-        targets: {
-          ...currentFlow.targets,
-          cpa: normalizeFlowTargetState('openai', 'cpa', cpaSource, defaultOpenAiTargets.cpa || {}),
-          sub2api: normalizeFlowTargetState('openai', 'sub2api', sub2apiSource, defaultOpenAiTargets.sub2api || {}),
-          codex2api: normalizeFlowTargetState('openai', 'codex2api', codex2apiSource, defaultOpenAiTargets.codex2api || {}),
-          webchat: normalizeFlowTargetState('openai', 'webchat', webchatSource, defaultOpenAiTargets.webchat || {}),
-        },
+        targets,
         signup: {
           signupMethod: String(
             input?.signupMethod
@@ -494,23 +703,12 @@
           ),
         },
         plus: {
-          plusModeEnabled: Boolean(
-            input?.plusModeEnabled
-            ?? currentFlow.plus?.plusModeEnabled
-            ?? defaultOpenAiPlus.plusModeEnabled
-            ?? false
-          ),
-          plusPaymentMethod: String(
+          plusModeEnabled: false,
+          plusPaymentMethod: normalizePlusPaymentMethod(
             input?.plusPaymentMethod
             ?? currentFlow.plus?.plusPaymentMethod
             ?? defaultOpenAiPlus.plusPaymentMethod
-            ?? 'plus-auto'
-          ).trim() || defaultOpenAiPlus.plusPaymentMethod || 'plus-auto',
-          plusAccountAccessStrategy: normalizePlusAccountAccessStrategy(
-            input?.plusAccountAccessStrategy
-            ?? currentFlow.plus?.plusAccountAccessStrategy
-            ?? defaultOpenAiPlus.plusAccountAccessStrategy
-            ?? 'oauth'
+            ?? 'paypal'
           ),
           hostedCheckoutVerificationUrl: String(
             input?.hostedCheckoutVerificationUrl
@@ -581,11 +779,37 @@
         baseUrl: sharedWebchatConfig.baseUrl,
         apiKey: sharedWebchatConfig.apiKey,
       };
+      const grok2apiCurrent = isPlainObject(currentFlow.targets.grok2api)
+        ? currentFlow.targets.grok2api
+        : {};
+      const grok2apiSource = {
+        ...grok2apiCurrent,
+        baseUrl: input?.grok2ApiUrl ?? grok2apiCurrent.baseUrl,
+        apiKey: input?.grok2ApiAdminKey ?? grok2apiCurrent.apiKey,
+      };
+      const sharedSub2ApiCredentials = resolveSharedSub2ApiCredentials(input, nested, openAiFlow, currentFlow);
+      const sub2apiCurrent = isPlainObject(currentFlow.targets.sub2api)
+        ? currentFlow.targets.sub2api
+        : {};
+      const sub2apiSource = {
+        ...sub2apiCurrent,
+        ...sharedSub2ApiCredentials,
+        sub2apiGroupName: input?.grokSub2apiGroupName ?? sub2apiCurrent.sub2apiGroupName,
+        sub2apiGroupNames: input?.grokSub2apiGroupNames ?? sub2apiCurrent.sub2apiGroupNames,
+        sub2apiAccountPriority: input?.grokSub2apiAccountPriority ?? sub2apiCurrent.sub2apiAccountPriority,
+        sub2apiDefaultProxyName: input?.grokSub2apiDefaultProxyName ?? sub2apiCurrent.sub2apiDefaultProxyName,
+        grok2apiUploadEnabled: input?.grokSub2apiGrok2ApiUploadEnabled
+          ?? input?.grokSub2apiWebchat2ApiUploadEnabled
+          ?? sub2apiCurrent.grok2apiUploadEnabled
+          ?? sub2apiCurrent.webchat2apiUploadEnabled,
+      };
       return {
         ...currentFlow,
         targets: {
           ...currentFlow.targets,
           webchat2api: normalizeFlowTargetState('grok', 'webchat2api', targetSource, defaultGrokTargets.webchat2api || {}),
+          grok2api: normalizeFlowTargetState('grok', 'grok2api', grok2apiSource, defaultGrokTargets.grok2api || {}),
+          sub2api: normalizeFlowTargetState('grok', 'sub2api', sub2apiSource, defaultGrokTargets.sub2api || {}),
         },
       };
     }
@@ -603,8 +827,15 @@
         defaults.activeFlowId
       );
       const normalized = {
-        schemaVersion: Number(input?.settingsSchemaVersion || nested?.schemaVersion || defaults.schemaVersion) || defaults.schemaVersion,
+        schemaVersion: defaults.schemaVersion,
         activeFlowId,
+        ui: {
+          language: rootScope.FlowPilotI18n?.normalizeLanguageSetting
+            ? rootScope.FlowPilotI18n.normalizeLanguageSetting(input?.uiLanguage ?? nested?.ui?.language ?? defaults.ui.language)
+            : (['auto', 'zh-CN', 'en-US'].includes(String(input?.uiLanguage ?? nested?.ui?.language ?? '').trim())
+              ? String(input?.uiLanguage ?? nested?.ui?.language).trim()
+              : defaults.ui.language),
+        },
         services: {
           email: {
             provider: String(
@@ -671,10 +902,9 @@
 
     function mergeSettingsState(baseValue = {}, patchValue = {}) {
       const baseSettingsState = normalizeSettingsState(baseValue);
-      const patchSettingsState = normalizeSettingsState({
-        settingsState: patchValue,
-        activeFlowId: patchValue?.activeFlowId ?? baseSettingsState.activeFlowId,
-      });
+      const patchSettingsState = isPlainObject(patchValue)
+        ? patchValue
+        : {};
 
       return normalizeSettingsState({
         settingsState: mergePlainObjects(baseSettingsState, patchSettingsState),
@@ -728,10 +958,14 @@
       const next = {
         ...(isPlainObject(baseInput) ? cloneValue(baseInput) : {}),
       };
+      legacyMigrationStorageKeys.forEach((key) => {
+        delete next[key];
+      });
       const openaiState = normalizedState.flows.openai || buildDefaultFlowSettings('openai');
       const kiroState = normalizedState.flows.kiro || buildDefaultFlowSettings('kiro');
       const grokState = normalizedState.flows.grok || buildDefaultFlowSettings('grok');
       next.activeFlowId = normalizedState.activeFlowId;
+      next.uiLanguage = normalizedState.ui?.language || 'auto';
       next.targetId = getSelectedTargetId(normalizedState, normalizedState.activeFlowId);
       next.vpsUrl = openaiState.targets.cpa?.vpsUrl || '';
       next.vpsPassword = openaiState.targets.cpa?.vpsPassword || '';
@@ -748,13 +982,19 @@
       next.openaiWebchatUrl = openaiState.targets.webchat?.baseUrl || '';
       next.openaiWebchatAdminKey = openaiState.targets.webchat?.apiKey || '';
       next.openaiWebchatUploadEnabled = Boolean(openaiState.webchatUpload?.enabled);
+      next.openaiChatgpt2ApiUrl = openaiState.targets.chatgpt2api?.baseUrl || '';
+      next.openaiChatgpt2ApiAdminKey = openaiState.targets.chatgpt2api?.apiKey || '';
       next.customPassword = normalizedState.services.account.customPassword;
       next.signupMethod = openaiState.signup?.signupMethod || 'email';
       next.phoneVerificationEnabled = Boolean(openaiState.signup?.phoneVerificationEnabled);
       next.phoneSignupReloginAfterBindEmailEnabled = Boolean(openaiState.signup?.phoneSignupReloginAfterBindEmailEnabled);
-      next.plusModeEnabled = Boolean(openaiState.plus?.plusModeEnabled);
-      next.plusPaymentMethod = openaiState.plus?.plusPaymentMethod || 'plus-auto';
-      next.plusAccountAccessStrategy = openaiState.plus?.plusAccountAccessStrategy || 'oauth';
+      next.plusModeEnabled = false;
+      next.plusPaymentMethod = normalizePlusPaymentMethod(openaiState.plus?.plusPaymentMethod || 'paypal');
+      const selectedOpenAiTargetId = getSelectedTargetId(normalizedState, 'openai');
+      next.accountDeliveryMode = normalizeAccountDeliveryModeForTarget(
+        selectedOpenAiTargetId,
+        openaiState.targets?.[selectedOpenAiTargetId]?.accountDeliveryMode
+      );
       next.hostedCheckoutVerificationUrl = openaiState.plus?.hostedCheckoutVerificationUrl || '';
       next.hostedCheckoutPhoneNumber = openaiState.plus?.hostedCheckoutPhoneNumber || '';
       next.plusHostedCheckoutOauthDelaySeconds = openaiState.plus?.plusHostedCheckoutOauthDelaySeconds ?? 3;
@@ -768,6 +1008,15 @@
       next.kiroRsKey = kiroState.targets['kiro-rs']?.apiKey || '';
       next.grokWebchat2ApiUrl = grokState.targets.webchat2api?.baseUrl || '';
       next.grokWebchat2ApiAdminKey = grokState.targets.webchat2api?.apiKey || '';
+      next.grok2ApiUrl = grokState.targets.grok2api?.baseUrl || '';
+      next.grok2ApiAdminKey = grokState.targets.grok2api?.apiKey || '';
+      next.grokSub2apiGroupName = grokState.targets.sub2api?.sub2apiGroupName || '';
+      next.grokSub2apiGroupNames = cloneValue(grokState.targets.sub2api?.sub2apiGroupNames || []);
+      next.grokSub2apiAccountPriority = grokState.targets.sub2api?.sub2apiAccountPriority || 1;
+      next.grokSub2apiDefaultProxyName = grokState.targets.sub2api?.sub2apiDefaultProxyName || '';
+      next.grokSub2apiGrok2ApiUploadEnabled = Boolean(
+        grokState.targets.sub2api?.grok2apiUploadEnabled
+      );
       next.stepExecutionRangeByFlow = buildStepExecutionRangeByFlow(normalizedState);
       next.settingsSchemaVersion = normalizedState.schemaVersion;
       next.settingsState = cloneValue(normalizedState);
@@ -787,6 +1036,17 @@
           kiroRsKey: targetSettings.apiKey || '',
         };
       }
+      if (normalizedFlowId === 'openai') {
+        const targetSettings = getTargetSettings(normalizedState, normalizedFlowId, targetId);
+        return {
+          activeFlowId: normalizedFlowId,
+          targetId,
+          accountDeliveryMode: normalizeAccountDeliveryModeForTarget(
+            targetId,
+            targetSettings.accountDeliveryMode
+          ),
+        };
+      }
       return {
         activeFlowId: normalizedFlowId,
         targetId,
@@ -799,6 +1059,7 @@
       buildStepExecutionRangeByFlow,
       getFlowInputState,
       getFlowSettings,
+      getLegacyMigrationStorageKeys,
       getSelectedTargetId,
       getTargetSettings,
       mergeSettingsState,

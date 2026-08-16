@@ -40,7 +40,6 @@
       executeNodeViaCompletionSignal,
       exportSettingsBundle,
       fetchGeneratedEmail,
-      refreshGpcCardBalance,
       testKiroRsConnection,
       finalizePhoneActivationAfterSuccessfulFlow,
       finalizeStep3Completion,
@@ -220,13 +219,68 @@
       return String(targetId || fallbackSourceId).trim().toLowerCase() || fallbackSourceId;
     }
 
+    function normalizeMessageAccountDeliveryMode(value = '', fallback = 'oauth') {
+      const rootScope = typeof self !== 'undefined' ? self : globalThis;
+      if (typeof rootScope.MultiPageOpenAiAccountDelivery?.normalizeAccountDeliveryMode === 'function') {
+        return rootScope.MultiPageOpenAiAccountDelivery.normalizeAccountDeliveryMode(value, fallback);
+      }
+      return String(value || fallback || 'oauth').trim().toLowerCase() || 'oauth';
+    }
+
+    function createMessageRouterError(code, message) {
+      const error = new Error(message);
+      error.code = code;
+      return error;
+    }
+
+    function assertExplicitAccountDeliveryTarget(payload = {}) {
+      if (!Object.prototype.hasOwnProperty.call(payload, 'accountDeliveryMode')) {
+        return;
+      }
+      if (
+        !Object.prototype.hasOwnProperty.call(payload, 'targetId')
+        || !String(payload.targetId || '').trim()
+      ) {
+        throw createMessageRouterError(
+          'ACCOUNT_DELIVERY_TARGET_REQUIRED',
+          '保存账号交付方式时必须同时指定目标。'
+        );
+      }
+    }
+
+    function assertAccountDeliverySelectionUnlocked(state = {}, payload = {}) {
+      if (typeof isAutoRunLockedState !== 'function' || !isAutoRunLockedState(state)) {
+        return;
+      }
+      const activeFlowId = normalizeMessageFlowId(
+        payload.activeFlowId ?? state?.activeFlowId,
+        'openai'
+      );
+      const targetChanged = Object.prototype.hasOwnProperty.call(payload, 'targetId')
+        && normalizeMessageTargetId(activeFlowId, payload.targetId, state?.targetId)
+          !== normalizeMessageTargetId(activeFlowId, state?.targetId, state?.targetId);
+      const accountDeliveryModeChanged = Object.prototype.hasOwnProperty.call(payload, 'accountDeliveryMode')
+        && normalizeMessageAccountDeliveryMode(payload.accountDeliveryMode, state?.accountDeliveryMode)
+          !== normalizeMessageAccountDeliveryMode(state?.accountDeliveryMode, 'oauth');
+      if (targetChanged || accountDeliveryModeChanged) {
+        throw createMessageRouterError(
+          'ACCOUNT_DELIVERY_SELECTION_LOCKED',
+          '当前 workflow 正在运行，不能切换账号交付目标或方式。'
+        );
+      }
+    }
+
     function buildAutoRunFlowStateUpdates(payload = {}) {
       const hasActiveFlowId = Object.prototype.hasOwnProperty.call(payload, 'activeFlowId');
       const hasTargetId = Object.prototype.hasOwnProperty.call(payload, 'targetId');
       const hasSignupMethod = Object.prototype.hasOwnProperty.call(payload, 'signupMethod');
       const hasPhoneVerificationEnabled = Object.prototype.hasOwnProperty.call(payload, 'phoneVerificationEnabled');
       const hasPlusModeEnabled = Object.prototype.hasOwnProperty.call(payload, 'plusModeEnabled');
-      if (!hasActiveFlowId && !hasTargetId && !hasSignupMethod && !hasPhoneVerificationEnabled && !hasPlusModeEnabled) {
+      const hasAccountDeliveryMode = Object.prototype.hasOwnProperty.call(payload, 'accountDeliveryMode');
+      if (hasAccountDeliveryMode) {
+        assertExplicitAccountDeliveryTarget(payload);
+      }
+      if (!hasActiveFlowId && !hasTargetId && !hasSignupMethod && !hasPhoneVerificationEnabled && !hasPlusModeEnabled && !hasAccountDeliveryMode) {
         return {};
       }
       const activeFlowId = normalizeMessageFlowId(payload.activeFlowId, 'openai');
@@ -249,9 +303,15 @@
         updates.phoneVerificationEnabled = Boolean(payload.phoneVerificationEnabled);
       }
       if (hasPlusModeEnabled) {
-        updates.plusModeEnabled = Boolean(payload.plusModeEnabled);
+        updates.plusModeEnabled = false;
       }
-      if (hasSignupMethod || hasPhoneVerificationEnabled || hasPlusModeEnabled || hasTargetId || hasActiveFlowId) {
+      if (hasAccountDeliveryMode) {
+        updates.accountDeliveryMode = normalizeMessageAccountDeliveryMode(
+          payload.accountDeliveryMode,
+          'oauth'
+        );
+      }
+      if (hasSignupMethod || hasPhoneVerificationEnabled || hasPlusModeEnabled || hasTargetId || hasActiveFlowId || hasAccountDeliveryMode) {
         updates.resolvedSignupMethod = null;
       }
       return updates;
@@ -646,6 +706,27 @@
       };
     }
 
+    async function skipRegistrationWaitStepAfter(currentStep, state = {}) {
+      const step6 = findStepByKeyAfter(currentStep, 'wait-registration-success', state)
+        || (getStepKeyForState(6, state) === 'wait-registration-success' ? 6 : null);
+      if (!step6) {
+        return false;
+      }
+      const step6Status = getNodeStatusByStep(step6, state);
+      if (isStepProtectedFromAutoSkip(step6Status)) {
+        return false;
+      }
+      await setNodeStatusByStep(step6, 'skipped', state);
+      const currentStepKey = getStepKeyForState(currentStep, state)
+        || (Number(currentStep) === 3 ? 'fill-password' : 'fetch-signup-code');
+      await addLog(
+        `步骤 ${currentStep}：账号已进入 ChatGPT 已登录态，已自动跳过步骤 ${step6}，流程将直接进入后续节点。`,
+        'warn',
+        { step: currentStep, stepKey: currentStepKey }
+      );
+      return true;
+    }
+
     function findStepByKeyAfter(currentOrder, targetKey, state = {}) {
       const activeStepIds = typeof getStepIdsForState === 'function'
         ? getStepIdsForState(state)
@@ -680,17 +761,11 @@
 
     function normalizePlusPaymentMethodForDisplay(value = '') {
       const normalized = String(value || '').trim().toLowerCase();
-      if (normalized === 'none' || normalized === 'no-payment' || normalized === 'skip-payment') {
+      if (normalized === 'none') {
         return 'none';
       }
-      if (normalized === 'paypal-hosted' || normalized === 'paypal_direct' || normalized === 'paypal-direct') {
+      if (normalized === 'paypal-hosted') {
         return 'paypal-hosted';
-      }
-      if (normalized === 'gpc-helper') {
-        return 'gpc-helper';
-      }
-      if (normalized === 'plus-auto' || normalized === 'pix' || normalized === 'pix_plus' || normalized === 'pixplus') {
-        return 'plus-auto';
       }
       return 'paypal';
     }
@@ -703,51 +778,13 @@
       if (method === 'paypal-hosted') {
         return 'PayPal 无卡直绑';
       }
-      if (method === 'gpc-helper') {
-        return 'GPC';
-      }
-      if (method === 'plus-auto') {
-        return 'Plus 自动充值';
-      }
       return 'PayPal';
     }
 
-    function normalizePlusAccountAccessStrategyForDisplay(value = '') {
-      const normalized = String(value || '').trim().toLowerCase();
-      if (normalized === 'sub2api_codex_session') {
-        return 'sub2api_codex_session';
-      }
-      if (normalized === 'cpa_codex_session') {
-        return 'cpa_codex_session';
-      }
-      return 'oauth';
-    }
-
-    function getPlusAccountAccessStrategyLabel(value = '') {
-      return normalizePlusAccountAccessStrategyForDisplay(value) === 'sub2api_codex_session'
-        ? '导入当前 ChatGPT 会话到 SUB2API'
-        : 'OAuth';
-    }
-
-    function getPlusAccountAccessStrategyLabel(value = '', targetId = '') {
-      const strategy = normalizePlusAccountAccessStrategyForDisplay(value);
-      const normalizedTargetId = String(targetId || '').trim().toLowerCase();
-      if (strategy === 'sub2api_codex_session') {
-        return '导入当前 ChatGPT 会话到 SUB2API';
-      }
-      if (strategy === 'cpa_codex_session') {
-        return '导入当前 ChatGPT 会话到 CPA';
-      }
-      if (normalizedTargetId === 'cpa') {
-        return '通过 OAuth 回调创建 CPA 账号';
-      }
-      if (normalizedTargetId === 'sub2api') {
-        return '通过 OAuth 回调创建 SUB2API 账号';
-      }
-      if (normalizedTargetId === 'codex2api') {
-        return '通过 OAuth 回调创建 Codex2API 账号';
-      }
-      return 'OAuth';
+    function getAccountDeliveryModeLabel(value = '') {
+      const rootScope = typeof self !== 'undefined' ? self : globalThis;
+      const definition = rootScope.MultiPageOpenAiAccountDelivery?.getAccountDeliveryModeDefinition?.(value);
+      return String(definition?.label || value || 'OAuth').trim() || 'OAuth';
     }
 
     async function handlePlatformVerifyStepData(payload) {
@@ -994,6 +1031,9 @@
               await addLog('步骤 3：页面已直接进入已登录态，已自动跳过步骤 5。', 'warn');
             }
           }
+          if (payload.skipRegistrationWaitStep) {
+            await skipRegistrationWaitStepAfter(step, await getState());
+          }
           if (payload.loginVerificationRequestedAt) {
             await setState({ loginVerificationRequestedAt: payload.loginVerificationRequestedAt });
           }
@@ -1020,6 +1060,9 @@
                 await addLog('步骤 4：检测到账号已直接进入已登录态，已自动跳过步骤 5。', 'warn');
               }
             }
+          }
+          if (payload.skipRegistrationWaitStep) {
+            await skipRegistrationWaitStepAfter(step, await getState());
           }
           break;
         case 7:
@@ -1386,7 +1429,7 @@
           if (Object.keys(autoRunFlowStateUpdates).length > 0 && typeof setState === 'function') {
             await setState(autoRunFlowStateUpdates);
           }
-          const state = await getState();
+          let state = await getState();
           const autoRunStartValidation = validateAutoRunStart(state, {
             activeFlowId: autoRunFlowStateUpdates.activeFlowId ?? state?.activeFlowId,
             targetId: autoRunFlowStateUpdates.targetId ?? state?.targetId,
@@ -1397,6 +1440,17 @@
           }
           if (getPendingAutoRunTimerPlan(state)) {
             throw new Error('已有线程间隔等待，请先停止或立即继续。');
+          }
+          const effectiveAccountDeliveryMode = autoRunStartValidation?.capabilityState
+            ?.effectiveAccountDeliveryMode;
+          if (
+            Object.prototype.hasOwnProperty.call(autoRunFlowStateUpdates, 'accountDeliveryMode')
+            && effectiveAccountDeliveryMode
+            && effectiveAccountDeliveryMode !== autoRunFlowStateUpdates.accountDeliveryMode
+            && typeof setState === 'function'
+          ) {
+            await setState({ accountDeliveryMode: effectiveAccountDeliveryMode });
+            state = await getState();
           }
           const totalRuns = normalizeRunCount(message.payload?.totalRuns || 1);
           const autoRunSkipFailures = Boolean(message.payload?.autoRunSkipFailures);
@@ -1448,8 +1502,14 @@
 
         case 'SAVE_SETTING': {
           const currentState = await getState();
-          const updates = buildPersistentSettingsPayload(message.payload || {});
-          const sessionUpdates = buildLuckmailSessionSettingsPayload(message.payload || {});
+          const rawPayload = message.payload || {};
+          assertExplicitAccountDeliveryTarget(rawPayload);
+          assertAccountDeliverySelectionUnlocked(currentState, rawPayload);
+          const updates = buildPersistentSettingsPayload(rawPayload);
+          if (Object.prototype.hasOwnProperty.call(rawPayload, 'plusModeEnabled')) {
+            updates.plusModeEnabled = false;
+          }
+          const sessionUpdates = buildLuckmailSessionSettingsPayload(rawPayload);
           const runtimeStateUpdates = {};
           const modeValidation = validateModeSwitch({
             ...currentState,
@@ -1496,9 +1556,9 @@
           const plusPaymentChanged = Object.prototype.hasOwnProperty.call(updates, 'plusPaymentMethod')
             && normalizePlusPaymentMethodForDisplay(currentState?.plusPaymentMethod || 'paypal')
               !== normalizePlusPaymentMethodForDisplay(updates.plusPaymentMethod || 'paypal');
-          const plusAccountAccessStrategyChanged = Object.prototype.hasOwnProperty.call(updates, 'plusAccountAccessStrategy')
-            && normalizePlusAccountAccessStrategyForDisplay(currentState?.plusAccountAccessStrategy || 'oauth')
-              !== normalizePlusAccountAccessStrategyForDisplay(updates.plusAccountAccessStrategy || 'oauth');
+          const accountDeliveryModeChanged = Object.prototype.hasOwnProperty.call(updates, 'accountDeliveryMode')
+            && normalizeMessageAccountDeliveryMode(currentState?.accountDeliveryMode, 'oauth')
+              !== normalizeMessageAccountDeliveryMode(updates.accountDeliveryMode, 'oauth');
           const phoneSignupReloginAfterBindEmailChanged = Object.prototype.hasOwnProperty.call(updates, 'phoneSignupReloginAfterBindEmailEnabled')
             && Boolean(currentState?.phoneSignupReloginAfterBindEmailEnabled) !== Boolean(updates.phoneSignupReloginAfterBindEmailEnabled);
           const nextPlusModeEnabled = Object.prototype.hasOwnProperty.call(updates, 'plusModeEnabled')
@@ -1506,7 +1566,7 @@
             : Boolean(currentState?.plusModeEnabled);
           const stepModeChanged = modeChanged
             || (nextPlusModeEnabled && plusPaymentChanged)
-            || (nextPlusModeEnabled && plusAccountAccessStrategyChanged)
+            || accountDeliveryModeChanged
             || phoneSignupReloginAfterBindEmailChanged;
           const canonicalSettingsUpdates = await setPersistentSettings(updates);
           const stateUpdates = {
@@ -1612,34 +1672,17 @@
             broadcastDataUpdate(stateUpdates);
           }
           if (modeChanged) {
-            const selectedPlusPaymentMethod = getPlusPaymentMethodLabel(
-              stateUpdates.plusPaymentMethod ?? currentState?.plusPaymentMethod ?? 'paypal'
-            );
-            const selectedPlusAccountAccessStrategy = getPlusAccountAccessStrategyLabel(
-              stateUpdates.plusAccountAccessStrategy ?? currentState?.plusAccountAccessStrategy ?? 'oauth',
-              stateUpdates.targetId
-                ?? currentState?.targetId
-                ?? 'cpa'
-            );
-            await addLog(
-              Boolean(updates.plusModeEnabled)
-                ? `Plus 模式已开启，已切换为 Plus Checkout 步骤，当前支付方式：${selectedPlusPaymentMethod}，账号接入策略：${selectedPlusAccountAccessStrategy}。`
-                : 'Plus 模式已关闭，已恢复普通注册授权步骤。',
-              'info'
-            );
+            await addLog('Plus 模式当前不可用，已保持关闭。', 'info');
           } else if (plusPaymentChanged && nextPlusModeEnabled) {
             const selectedPlusPaymentMethod = getPlusPaymentMethodLabel(
               stateUpdates.plusPaymentMethod ?? currentState?.plusPaymentMethod ?? 'paypal'
             );
             await addLog(`Plus 支付方式已切换为 ${selectedPlusPaymentMethod}，已更新对应的 Plus 步骤。`, 'info');
-          } else if (plusAccountAccessStrategyChanged && nextPlusModeEnabled) {
-            const selectedPlusAccountAccessStrategy = getPlusAccountAccessStrategyLabel(
-              stateUpdates.plusAccountAccessStrategy ?? currentState?.plusAccountAccessStrategy ?? 'oauth',
-              stateUpdates.targetId
-                ?? currentState?.targetId
-                ?? 'cpa'
+          } else if (accountDeliveryModeChanged) {
+            const selectedAccountDeliveryMode = getAccountDeliveryModeLabel(
+              stateUpdates.accountDeliveryMode ?? updates.accountDeliveryMode
             );
-            await addLog(`Plus 账号接入策略已切换为 ${selectedPlusAccountAccessStrategy}，已更新对应的 Plus 尾链。`, 'info');
+            await addLog(`账号交付方式已切换为 ${selectedAccountDeliveryMode}。`, 'info');
           }
           return {
             ok: true,
@@ -1647,20 +1690,6 @@
             proxyRouting,
             state: await getState(),
           };
-        }
-
-        case 'REFRESH_GPC_CARD_BALANCE': {
-          if (typeof refreshGpcCardBalance !== 'function') {
-            throw new Error('GPC 卡密查询能力尚未接入。');
-          }
-          const state = await getState();
-          const result = await refreshGpcCardBalance({
-            ...(state || {}),
-            ...(message.payload || {}),
-          }, {
-            reason: message.payload?.reason,
-          });
-          return { ok: true, ...result };
         }
 
         case 'CHECK_KIRO_RS_CONNECTION': {

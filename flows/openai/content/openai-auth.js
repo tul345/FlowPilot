@@ -696,19 +696,45 @@ function findSignupMoreOptionsTrigger() {
   }) || null;
 }
 
-function getSignupEmailContinueButton({ allowDisabled = false } = {}) {
-  const direct = document.querySelector('button[type="submit"], input[type="submit"]');
-  if (direct && isVisibleElement(direct) && (allowDisabled || isActionEnabled(direct))) {
-    return direct;
-  }
+function getSignupEmailContinueButton({ allowDisabled = false, input = null } = {}) {
+  const targetInput = input
+    || (typeof getSignupEmailInput === 'function' ? getSignupEmailInput() : null)
+    || (typeof getSignupPhoneInput === 'function' ? getSignupPhoneInput() : null);
+  const scopedRoot = targetInput?.form
+    || targetInput?.closest?.('form')
+    || targetInput?.closest?.('[role="dialog"], dialog, [aria-modal="true"]')
+    || null;
+  const candidateSelector = 'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]';
+  const exactContinuePattern = /^(?:continue|next|submit|继续|下一步|続行|続ける|次へ|送信)$/i;
+  const looseContinuePattern = /continue|next|submit|继续|下一步|続行|続ける|次へ|送信/i;
 
-  const candidates = document.querySelectorAll(
-    'button, a, [role="button"], [role="link"], input[type="button"], input[type="submit"]'
-  );
-  return Array.from(candidates).find((el) => {
-    if (!isVisibleElement(el) || (!allowDisabled && !isActionEnabled(el))) return false;
-    return /continue|next|submit|继续|下一步|続行|続ける|次へ|送信/i.test(getActionText(el));
-  }) || null;
+  const findInRoot = (root) => {
+    if (!root?.querySelectorAll) return null;
+    const candidates = Array.from(root.querySelectorAll(candidateSelector));
+    const isUsable = (el) => (
+      isVisibleElement(el)
+      && (allowDisabled || isActionEnabled(el))
+    );
+    const exactContinue = candidates.find((el) => (
+      isUsable(el) && exactContinuePattern.test(getActionText(el))
+    ));
+    if (exactContinue) return exactContinue;
+
+    if (root !== document) {
+      const submitButton = candidates.find((el) => (
+        isUsable(el) && String(el.getAttribute?.('type') || '').toLowerCase() === 'submit'
+      ));
+      if (submitButton) return submitButton;
+
+      return candidates.find((el) => (
+        isUsable(el) && looseContinuePattern.test(getActionText(el))
+      )) || null;
+    }
+
+    return null;
+  };
+
+  return findInRoot(scopedRoot) || findInRoot(document);
 }
 
 function findSignupEntryTrigger(options = {}) {
@@ -777,6 +803,7 @@ function inspectSignupEntryState() {
     return {
       state: 'logged_in_home',
       skipProfileStep: true,
+      skipRegistrationWaitStep: true,
       url: postVerificationState.url || location.href,
     };
   }
@@ -806,7 +833,7 @@ function inspectSignupEntryState() {
     return {
       state: 'email_entry',
       emailInput,
-      continueButton: getSignupEmailContinueButton({ allowDisabled: true }),
+      continueButton: getSignupEmailContinueButton({ allowDisabled: true, input: emailInput }),
       switchToPhoneTrigger: findSignupUsePhoneTrigger(),
       url: location.href,
     };
@@ -1340,8 +1367,22 @@ async function fillSignupEmailAndContinue(email, step) {
   });
   log(`步骤 ${step}：邮箱已填写`);
 
-  const continueButton = snapshot.continueButton || getSignupEmailContinueButton({ allowDisabled: true });
-  if (!continueButton || !isActionEnabled(continueButton)) {
+  const continueButtonWaitStartedAt = Date.now();
+  let continueButton = null;
+  while (Date.now() - continueButtonWaitStartedAt < 5000) {
+    throwIfStopped();
+    const currentEmailInput = typeof getSignupEmailInput === 'function'
+      ? getSignupEmailInput() || snapshot.emailInput
+      : snapshot.emailInput;
+    const currentButton = getSignupEmailContinueButton({ input: currentEmailInput });
+    if (currentButton && isActionEnabled(currentButton)) {
+      continueButton = currentButton;
+      break;
+    }
+    await sleep(100);
+  }
+
+  if (!continueButton) {
     throw new Error(`步骤 ${step}：未找到可点击的“继续”按钮。URL: ${location.href}`);
   }
 
@@ -2610,7 +2651,7 @@ async function submitSignupPhoneNumberAndContinue(payload = {}) {
   }
   log(`步骤 2：手机号已填写：${phoneNumber}${dialCode ? `（区号 +${dialCode}，本地号 ${inputValue}）` : ''}`);
 
-  const continueButton = getSignupEmailContinueButton({ allowDisabled: true });
+  const continueButton = getSignupEmailContinueButton({ allowDisabled: true, input: snapshot.phoneInput });
   if (!continueButton || !isActionEnabled(continueButton)) {
     throw new Error(`步骤 2：未找到可点击的“继续”按钮。URL: ${location.href}`);
   }
@@ -2706,6 +2747,7 @@ async function step3_fillEmailPassword(payload) {
       skippedPasswordPage: true,
       deferredSubmit: false,
       ...(snapshot.skipProfileStep ? { skipProfileStep: true } : {}),
+      ...(snapshot.skipRegistrationWaitStep ? { skipRegistrationWaitStep: true } : {}),
     };
     log('步骤 3：当前页面已进入验证码或后续阶段，密码页按已跳过处理。', 'warn');
     reportComplete(3, completionPayload);
@@ -3070,6 +3112,7 @@ function getStep4PostVerificationState(options = {}) {
     return {
       state: 'logged_in_home',
       skipProfileStep: true,
+      skipRegistrationWaitStep: true,
       url: location.href,
     };
   }
@@ -5052,6 +5095,7 @@ function inspectSignupVerificationState() {
     return {
       state: 'logged_in_home',
       skipProfileStep: true,
+      skipRegistrationWaitStep: true,
       url: postVerificationState.url || location.href,
     };
   }
@@ -5212,11 +5256,12 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
     }
 
     if (snapshot.state === 'logged_in_home') {
-      log(`${prepareLogLabel}：页面已直接进入 ChatGPT 已登录态，本步骤按已完成处理，并将跳过步骤 5。`, 'ok');
+      log(`${prepareLogLabel}：页面已直接进入 ChatGPT 已登录态，本步骤按已完成处理，并将跳过步骤 5/6。`, 'ok');
       return {
         ready: true,
         alreadyVerified: true,
         skipProfileStep: true,
+        skipRegistrationWaitStep: true,
         retried: recoveryRound,
         prepareSource,
       };
@@ -5231,6 +5276,7 @@ async function prepareSignupVerificationFlow(payload = {}, timeout = 30000) {
         skipLoginVerificationStep: true,
         directOAuthConsentPage: true,
         skipProfileStep: true,
+        skipRegistrationWaitStep: true,
         retried: recoveryRound,
         prepareSource,
       };
@@ -5353,6 +5399,7 @@ async function waitForVerificationSubmitOutcome(step, timeout, options = {}) {
         return {
           success: true,
           skipProfileStep: true,
+          skipRegistrationWaitStep: true,
           url: postVerificationState.url || location.href,
         };
       }
@@ -5396,6 +5443,7 @@ async function waitForVerificationSubmitOutcome(step, timeout, options = {}) {
       return {
         success: true,
         skipProfileStep: true,
+        skipRegistrationWaitStep: true,
         url: postVerificationState.url || location.href,
       };
     }
@@ -5533,6 +5581,7 @@ async function fillVerificationCode(step, payload) {
         assumed: true,
         alreadyAdvanced: true,
         skipProfileStep: true,
+        skipRegistrationWaitStep: true,
         url: postVerificationState.url || location.href,
       };
     }
