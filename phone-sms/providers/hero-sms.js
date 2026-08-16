@@ -543,6 +543,30 @@
     return 'unbounded';
   }
 
+  function buildActivationPriceAttempts(pricesToTry = [], pricePlan = {}, priceRange = {}) {
+    const fixedPrice = !Boolean(pricePlan?.syntheticUserLimitProbe);
+    const attempts = (Array.isArray(pricesToTry) ? pricesToTry : []).map((maxPrice) => ({
+      maxPrice,
+      fixedPrice,
+      flexibleCap: false,
+    }));
+    const flexibleCap = normalizeHeroSmsPriceLimit(pricePlan?.userLimit ?? priceRange?.maxPriceLimit);
+    if (fixedPrice && flexibleCap !== null && flexibleCap > 0) {
+      attempts.push({
+        maxPrice: flexibleCap,
+        fixedPrice: false,
+        flexibleCap: true,
+      });
+    }
+    return attempts;
+  }
+
+  function formatPriceAttemptForLog(attempt = {}) {
+    const value = attempt?.maxPrice;
+    const priceText = value === null || value === undefined ? '自动' : String(value);
+    return attempt?.flexibleCap ? `${priceText}（灵活上限）` : priceText;
+  }
+
   function resolvePriceRange(state = {}) {
     const minPriceLimit = normalizeHeroSmsPriceLimit(state?.heroSmsMinPrice);
     const maxPriceLimit = normalizeHeroSmsPriceLimit(state?.heroSmsMaxPrice);
@@ -1087,10 +1111,11 @@
           continue;
         }
 
-        for (const maxPrice of pricesToTry) {
+        const priceAttempts = buildActivationPriceAttempts(pricesToTry, pricePlan, priceRange);
+        for (const priceAttempt of priceAttempts) {
+          const { maxPrice, fixedPrice } = priceAttempt;
           for (const requestAction of requestActions) {
             try {
-              const fixedPrice = !Boolean(pricePlan.syntheticUserLimitProbe);
               if (typeof deps.addLog === 'function') {
                 await deps.addLog(
                   `步骤 9：HeroSMS ${countryConfig.label} 正在尝试${formatActionName(requestAction)}，价格档位 ${maxPrice === null || maxPrice === undefined ? '自动' : maxPrice}。`,

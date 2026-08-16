@@ -332,6 +332,14 @@ async function runAutoSequenceFromStep() {
     }
   }
 
+  if (state.expectManualSignupPhonePreserved) {
+    assert.strictEqual(state.accountIdentifierType, 'phone', 'fresh start should keep manual signup phone identity type');
+    assert.strictEqual(state.accountIdentifier, '+446700000001', 'fresh start should keep manual signup phone account identifier');
+    assert.strictEqual(state.signupPhoneNumber, '+446700000001', 'fresh start should keep manual signup phone number');
+    assert.strictEqual(state.signupPhoneActivation, null, 'manual signup phone should not keep an activation order');
+    assert.strictEqual(state.signupPhoneCompletedActivation, null, 'manual signup phone should not keep completed activation order');
+  }
+
   currentState = {
     ...currentState,
     email: 'fresh-round-' + runCalls + '@example.com',
@@ -454,6 +462,53 @@ const controller = self.MultiPageBackgroundAutoRunController.createAutoRunContro
 
 return {
   autoRunLoop: controller.autoRunLoop,
+  resetToManualSignupPhoneScenario() {
+    runCalls = 0;
+    autoRunSessionId = 0;
+    runtime.state = {
+      autoRunActive: false,
+      autoRunCurrentRun: 0,
+      autoRunTotalRuns: 1,
+      autoRunAttemptRun: 0,
+      autoRunSessionId: 0,
+    };
+    currentState = {
+      ...DEFAULT_STATE,
+      stepStatuses: { ...DEFAULT_STATE.stepStatuses },
+      nodeStatuses: { ...DEFAULT_STATE.nodeStatuses },
+      vpsUrl: 'https://example.com/vps',
+      vpsPassword: 'secret',
+      customPassword: '',
+      autoRunSkipFailures: false,
+      autoRunFallbackThreadIntervalMinutes: 0,
+      autoStepDelaySeconds: null,
+      signupMethod: 'phone',
+      resolvedSignupMethod: 'phone',
+      accountIdentifierType: 'phone',
+      accountIdentifier: '+446700000001',
+      signupPhoneNumber: '+446700000001',
+      signupPhoneActivation: null,
+      signupPhoneCompletedActivation: null,
+      signupPhoneVerificationRequestedAt: null,
+      signupPhoneVerificationPurpose: '',
+      mailProvider: '163',
+      emailGenerator: 'duck',
+      gmailBaseEmail: 'demo@gmail.com',
+      mail2925BaseEmail: 'demo@2925.com',
+      emailPrefix: 'demo',
+      inbucketHost: '',
+      inbucketMailbox: '',
+      cloudflareDomain: '',
+      cloudflareDomains: [],
+      tabRegistry: {
+        'openai-auth': { tabId: 77, ready: true },
+      },
+      sourceLastUrls: {
+        'openai-auth': 'https://auth.openai.com/authorize',
+      },
+      expectManualSignupPhonePreserved: true,
+    };
+  },
   snapshot() {
     return {
       runCalls,
@@ -499,6 +554,10 @@ return {
     },
     'reusable phone activation should survive fresh-attempt reset'
   );
+
+  api.resetToManualSignupPhoneScenario();
+  await api.autoRunLoop(1, { autoRunSkipFailures: false, mode: 'restart' });
+  assert.strictEqual(api.snapshot().runCalls, 1, 'manual signup phone scenario should run once');
 
   console.log('auto-run fresh attempt reset tests passed');
 })().catch((error) => {

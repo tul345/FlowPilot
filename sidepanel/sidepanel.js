@@ -293,6 +293,8 @@ const rowTempEmailFixedSubdomainPrefix = document.getElementById('row-temp-email
 const inputTempEmailSubdomainPrefix = document.getElementById('input-temp-email-subdomain-prefix');
 const tempEmailSubdomainPrefixFeedback = document.getElementById('temp-email-subdomain-prefix-feedback');
 const tempEmailEffectiveDomainPreview = document.getElementById('temp-email-effective-domain-preview');
+const rowTempEmailEduSubdomainToggle = document.getElementById('row-temp-email-edu-subdomain-toggle');
+const inputTempEmailUseEduSubdomain = document.getElementById('input-temp-email-use-edu-subdomain');
 const rowTempEmailDomain = document.getElementById('row-temp-email-domain');
 const labelTempEmailDomain = document.getElementById('label-temp-email-domain');
 const selectTempEmailDomain = document.getElementById('select-temp-email-domain');
@@ -554,6 +556,7 @@ const phoneSmsProviderOrderMenu = document.getElementById('phone-sms-provider-or
 const btnPhoneSmsProviderOrderReset = document.getElementById('btn-phone-sms-provider-order-reset');
 const btnHeroSmsPricePreview = document.getElementById('btn-hero-sms-price-preview');
 const btnPhoneSmsBalance = document.getElementById('btn-phone-sms-balance');
+const btnPhoneSmsCheapestCountries = document.getElementById('btn-phone-sms-cheapest-countries');
 const displayHeroSmsPlatform = document.getElementById('display-hero-sms-platform');
 const displayHeroSmsCurrentNumber = document.getElementById('display-hero-sms-current-number');
 const displayHeroSmsCurrentCountdown = document.getElementById('display-hero-sms-current-countdown');
@@ -786,7 +789,7 @@ const PHONE_SMS_PROVIDER_UI_DESCRIPTORS = Object.freeze({
     ]),
   }),
 });
-const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const HERO_SMS_COUNTRY_SELECTION_MAX = 10;
 
 function getPhoneSmsProviderUiDescriptor(provider = DEFAULT_PHONE_SMS_PROVIDER) {
   const normalizedProvider = normalizePhoneSmsProviderValue(provider);
@@ -4321,6 +4324,9 @@ function applyCloudflareTempEmailSettingsState(state = {}) {
       state?.cloudflareTempEmailSubdomainPrefix || ''
     );
   }
+  if (typeof inputTempEmailUseEduSubdomain !== 'undefined' && inputTempEmailUseEduSubdomain) {
+    inputTempEmailUseEduSubdomain.checked = Boolean(state?.cloudflareTempEmailUseEduSubdomain);
+  }
   renderCloudflareTempEmailDomainOptions(state?.cloudflareTempEmailDomain || '');
   setCloudflareTempEmailDomainEditMode(false, { clearInput: true });
 }
@@ -5326,6 +5332,8 @@ function collectSettingsPayload() {
     cloudflareTempEmailSubdomainPrefix: normalizeCloudflareTempEmailSubdomainPrefixValue(
       inputTempEmailSubdomainPrefix?.value || ''
     ),
+    cloudflareTempEmailUseEduSubdomain: typeof inputTempEmailUseEduSubdomain !== 'undefined'
+      && Boolean(inputTempEmailUseEduSubdomain?.checked),
     cloudflareTempEmailDomain: selectedCloudflareTempEmailDomain,
     cloudflareTempEmailDomains: tempEmailDomains,
     cloudMailBaseUrl: normalizeCloudMailBaseUrlInput((typeof inputCloudMailBaseUrl !== 'undefined' && inputCloudMailBaseUrl) ? inputCloudMailBaseUrl.value : ''),
@@ -7514,6 +7522,334 @@ function buildPhoneSmsPriceRangePreviewMessage(range = {}) {
     return `价格区间无效：最低购买价 ${formatHeroSmsPriceForPreview(range.minPrice) || range.minPrice} 高于价格上限 ${formatHeroSmsPriceForPreview(range.maxPrice) || range.maxPrice}`;
   }
   return rangeText ? `区间内无可用号源（当前 ${rangeText}）` : '暂无可用号源';
+}
+
+function getPhoneSmsCountryScanLimit() {
+  return Math.max(1, Math.floor(Number(HERO_SMS_COUNTRY_SELECTION_MAX) || 10));
+}
+
+function summarizePhoneSmsCountryPriceEntries(entries = [], range = {}) {
+  const tierStockByPrice = new Map();
+  (Array.isArray(entries) ? entries : [])
+    .filter((entry) => Number.isFinite(Number(entry?.cost ?? entry?.price)) && Number(entry?.cost ?? entry?.price) > 0)
+    .forEach((entry) => {
+      const price = Math.round(Number(entry.cost ?? entry.price) * 10000) / 10000;
+      const stockRaw = Number(entry.stockCount ?? entry.count);
+      const hasStock = Boolean(entry.inStock) || (!entry.hasStockField && !Number.isFinite(stockRaw));
+      const stockCount = hasStock
+        ? (Number.isFinite(stockRaw) && stockRaw > 0 ? Math.max(0, stockRaw) : 1)
+        : 0;
+      const previous = tierStockByPrice.get(price);
+      tierStockByPrice.set(price, Number.isFinite(previous) ? Math.max(previous, stockCount) : stockCount);
+    });
+
+  const tierEntries = Array.from(tierStockByPrice.entries())
+    .map(([price, count]) => ({
+      price: Number(price),
+      cost: Number(price),
+      count: Number.isFinite(Number(count)) ? Math.max(0, Number(count)) : 0,
+    }))
+    .sort((left, right) => left.price - right.price);
+  const inStockPrices = tierEntries
+    .filter((entry) => Number(entry.count) > 0)
+    .map((entry) => entry.price);
+  const rangePrices = filterPhoneSmsPriceValuesForPreviewRange(inStockPrices, range);
+  if (!rangePrices.length) {
+    return null;
+  }
+  const lowestPrice = rangePrices[0];
+  const lowestTier = tierEntries.find((entry) => entry.price === lowestPrice) || null;
+  return {
+    lowestPrice,
+    stockCount: lowestTier ? Number(lowestTier.count) : 0,
+    tierEntries: filterPhoneSmsPriceEntriesForPreviewRange(tierEntries, range),
+  };
+}
+
+async function fetchPhoneSmsJsonLikePayload(url, options = {}) {
+  const response = await fetch(url, {
+    cache: 'no-store',
+    ...(options || {}),
+  });
+  let rawText = '';
+  if (typeof response.text === 'function') {
+    rawText = await response.text();
+  } else if (typeof response.json === 'function') {
+    const jsonPayload = await response.json();
+    rawText = JSON.stringify(jsonPayload);
+  }
+  let payload = rawText;
+  try {
+    payload = rawText ? JSON.parse(rawText) : '';
+  } catch {
+    payload = rawText;
+  }
+  if (!response.ok) {
+    const error = new Error(summarizeHeroSmsPreviewError(payload, response.status));
+    error.payload = payload;
+    error.status = response.status;
+    throw error;
+  }
+  return payload;
+}
+
+function readPhoneSmsCountryOptionsForCheapestScan(provider = getSelectedPhoneSmsProvider()) {
+  const normalizedProvider = normalizePhoneSmsProviderValue(provider);
+  const selectEl = normalizedProvider === PHONE_SMS_PROVIDER_FIVE_SIM
+    ? selectFiveSimCountry
+    : (normalizedProvider === PHONE_SMS_PROVIDER_NEXSMS ? selectNexSmsCountry : selectHeroSmsCountry);
+  return Array.from(selectEl?.options || [])
+    .map((option, index) => {
+      if (normalizedProvider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+        const id = normalizeFiveSimCountryCode(option.value, '');
+        return id ? {
+          index,
+          id,
+          code: id,
+          label: normalizeFiveSimCountryLabel(option.textContent || '', id),
+        } : null;
+      }
+      if (normalizedProvider === PHONE_SMS_PROVIDER_NEXSMS) {
+        const id = normalizeNexSmsCountryIdValue(option.value, -1);
+        return id >= 0 ? {
+          index,
+          id,
+          label: normalizeNexSmsCountryLabel(option.textContent || '', `Country #${id}`),
+        } : null;
+      }
+      const id = normalizeHeroSmsCountryId(option.value, 0);
+      return id > 0 ? {
+        index,
+        id,
+        label: normalizeHeroSmsCountryLabel(option.textContent || '', `Country #${id}`),
+      } : null;
+    })
+    .filter(Boolean);
+}
+
+function formatPhoneSmsCheapestCountryLine(entry, index) {
+  const priceText = formatHeroSmsPriceForPreview(entry.lowestPrice) || String(entry.lowestPrice);
+  const tierText = formatPriceTiersForPreview(entry.tierEntries, {});
+  return `${index + 1}. ${entry.label}: ${priceText}${tierText ? `；档位：${tierText}` : ''}`;
+}
+
+async function scanHeroSmsCheapestCountry(country, context = {}) {
+  const apiKey = String(context.apiKey || '').trim();
+  const payloads = [];
+  let lastError = null;
+  for (const action of ['getPricesExtended', 'getPrices']) {
+    const url = new URL('https://hero-sms.com/stubs/handler_api.php');
+    url.searchParams.set('action', action);
+    url.searchParams.set('service', 'dr');
+    url.searchParams.set('country', String(country.id));
+    if (action === 'getPricesExtended') {
+      url.searchParams.set('freePrice', 'true');
+    }
+    if (apiKey) {
+      url.searchParams.set('api_key', apiKey);
+    }
+    try {
+      payloads.push(await fetchPhoneSmsJsonLikePayload(url.toString()));
+    } catch (error) {
+      lastError = error;
+      // Keep scanning other actions/countries; partial catalog data is enough.
+    }
+  }
+  if (!payloads.length && lastError) {
+    throw lastError;
+  }
+  const summary = summarizePhoneSmsCountryPriceEntries(
+    payloads.flatMap((payload) => collectHeroSmsPriceEntriesForPreview(payload, [])),
+    context.priceRange
+  );
+  return summary ? { ...country, ...summary } : null;
+}
+
+async function scanFiveSimCheapestCountry(country, context = {}) {
+  const product = normalizeFiveSimProductValue(
+    inputFiveSimProduct?.value || latestState?.fiveSimProduct || DEFAULT_FIVE_SIM_PRODUCT
+  );
+  const url = new URL('https://5sim.net/v1/guest/prices');
+  url.searchParams.set('country', normalizeFiveSimCountryCode(country.code || country.id, ''));
+  url.searchParams.set('product', product);
+  const payload = await fetchPhoneSmsJsonLikePayload(url.toString());
+  const productRoot = payload?.[product] || payload;
+  const countryRoot = productRoot?.[country.code || country.id] || productRoot;
+  const summary = summarizePhoneSmsCountryPriceEntries(
+    collectHeroSmsPriceEntriesForPreview(countryRoot, []),
+    context.priceRange
+  );
+  return summary ? { ...country, ...summary } : null;
+}
+
+async function scanNexSmsCheapestCountry(country, context = {}) {
+  const apiKey = String(context.apiKey || '').trim();
+  const serviceCode = normalizeNexSmsServiceCodeValue(
+    inputNexSmsServiceCode?.value || latestState?.nexSmsServiceCode || DEFAULT_NEX_SMS_SERVICE_CODE
+  );
+  const url = new URL('/api/getCountryByService', 'https://api.nexsms.net');
+  url.searchParams.set('apiKey', apiKey);
+  url.searchParams.set('serviceCode', serviceCode);
+  url.searchParams.set('countryId', String(country.id));
+  const payload = await fetchPhoneSmsJsonLikePayload(url.toString());
+  const data = payload?.data || payload;
+  const entries = collectHeroSmsPriceEntriesForPreview(data, []);
+  const minPrice = normalizeHeroSmsPriceForPreview(data?.minPrice);
+  if (minPrice !== null) {
+    entries.push({
+      cost: minPrice,
+      hasStockField: false,
+      stockCount: 1,
+      inStock: true,
+    });
+  }
+  const summary = summarizePhoneSmsCountryPriceEntries(entries, context.priceRange);
+  return summary ? { ...country, ...summary } : null;
+}
+
+async function mapPhoneSmsCountriesWithConcurrency(countries = [], worker, options = {}) {
+  const concurrency = Math.max(1, Math.min(
+    Math.floor(Number(options.concurrency) || 4),
+    countries.length || 1
+  ));
+  const results = new Array(countries.length);
+  let nextIndex = 0;
+  let completed = 0;
+  const runNext = async () => {
+    while (nextIndex < countries.length) {
+      const index = nextIndex;
+      nextIndex += 1;
+      const country = countries[index];
+      try {
+        results[index] = await worker(country, index);
+      } catch (error) {
+        results[index] = {
+          ...country,
+          error: error?.message || String(error),
+        };
+      } finally {
+        completed += 1;
+        if (typeof options.onProgress === 'function') {
+          options.onProgress(completed, countries.length);
+        }
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: concurrency }, () => runNext()));
+  return results;
+}
+
+function rankPhoneSmsCheapestCountryResults(results = []) {
+  return (Array.isArray(results) ? results : [])
+    .filter((entry) => Number.isFinite(Number(entry?.lowestPrice)) && Number(entry.lowestPrice) > 0)
+    .sort((left, right) => {
+      if (Number(left.lowestPrice) !== Number(right.lowestPrice)) {
+        return Number(left.lowestPrice) - Number(right.lowestPrice);
+      }
+      if (Number(left.stockCount) !== Number(right.stockCount)) {
+        return Number(right.stockCount) - Number(left.stockCount);
+      }
+      return Number(left.index) - Number(right.index);
+    });
+}
+
+function applyPhoneSmsCheapestCountrySelection(provider, rankedCountries = []) {
+  const normalizedProvider = normalizePhoneSmsProviderValue(provider);
+  const selected = rankedCountries.slice(0, getPhoneSmsCountryScanLimit());
+  if (normalizedProvider === PHONE_SMS_PROVIDER_FIVE_SIM) {
+    applyFiveSimCountrySelection(selected.map((country) => ({
+      id: country.code || country.id,
+      code: country.code || country.id,
+      label: country.label,
+    })), { ensureDefault: false });
+  } else if (normalizedProvider === PHONE_SMS_PROVIDER_NEXSMS) {
+    applyNexSmsCountrySelection(selected.map((country) => ({
+      id: country.id,
+      label: country.label,
+    })), { ensureDefault: false });
+  } else {
+    applyHeroSmsFallbackSelection(selected.map((country) => ({
+      id: country.id,
+      label: country.label,
+    })), { includePrimary: true });
+  }
+  updateHeroSmsPlatformDisplay();
+  markSettingsDirty(true);
+  saveSettings({ silent: true }).catch(() => { });
+  return selected;
+}
+
+async function selectCheapestPhoneSmsCountries() {
+  const provider = normalizePhoneSmsProviderValue(getSelectedPhoneSmsProvider());
+  if (provider === PHONE_SMS_PROVIDER_MADAO || provider === PHONE_SMS_PROVIDER_CUSTOM_URL) {
+    throw new Error('当前接码供应商不支持本地低价国家扫描。');
+  }
+  if (provider === PHONE_SMS_PROVIDER_HERO_SMS && typeof loadHeroSmsCountries === 'function') {
+    await loadHeroSmsCountries({ silent: true });
+  } else if (provider === PHONE_SMS_PROVIDER_FIVE_SIM && typeof loadFiveSimCountries === 'function') {
+    await loadFiveSimCountries({ silent: true });
+  } else if (provider === PHONE_SMS_PROVIDER_NEXSMS && typeof loadNexSmsCountries === 'function') {
+    await loadNexSmsCountries();
+  }
+
+  const priceRange = resolvePhoneSmsPricePreviewRange(provider);
+  if (priceRange.invalid) {
+    throw new Error(buildPhoneSmsPriceRangePreviewMessage(priceRange));
+  }
+
+  const apiKey = provider === PHONE_SMS_PROVIDER_NEXSMS
+    ? String(inputNexSmsApiKey?.value || '').trim()
+    : String(inputHeroSmsApiKey?.value || '').trim();
+  if ((provider === PHONE_SMS_PROVIDER_HERO_SMS || provider === PHONE_SMS_PROVIDER_NEXSMS) && !apiKey) {
+    throw new Error(provider === PHONE_SMS_PROVIDER_NEXSMS ? '请先填写 NexSMS API Key。' : '请先填写 HeroSMS API Key。');
+  }
+
+  const countries = readPhoneSmsCountryOptionsForCheapestScan(provider);
+  if (!countries.length) {
+    throw new Error('当前供应商没有可扫描的国家列表。');
+  }
+
+  if (rowHeroSmsPriceTiers) {
+    rowHeroSmsPriceTiers.style.display = '';
+  }
+  if (displayHeroSmsPriceTiers) {
+    displayHeroSmsPriceTiers.textContent = `正在扫描 ${countries.length} 个国家...`;
+  }
+
+  const worker = provider === PHONE_SMS_PROVIDER_FIVE_SIM
+    ? scanFiveSimCheapestCountry
+    : (provider === PHONE_SMS_PROVIDER_NEXSMS ? scanNexSmsCheapestCountry : scanHeroSmsCheapestCountry);
+  const results = await mapPhoneSmsCountriesWithConcurrency(
+    countries,
+    (country) => worker(country, { apiKey, priceRange }),
+    {
+      concurrency: 4,
+      onProgress: (done, total) => {
+        if (displayHeroSmsPriceTiers) {
+          displayHeroSmsPriceTiers.textContent = `正在扫描低价国家 ${done}/${total}...`;
+        }
+      },
+    }
+  );
+  const ranked = rankPhoneSmsCheapestCountryResults(results);
+  if (!ranked.length) {
+    const failedCount = results.filter((entry) => entry?.error).length;
+    throw new Error(`扫描完成，但没有找到价格区间内的可用国家；失败 ${failedCount}/${countries.length}。`);
+  }
+
+  const selected = applyPhoneSmsCheapestCountrySelection(provider, ranked);
+  const failedCount = results.filter((entry) => entry?.error).length;
+  const noStockCount = results.length - ranked.length - failedCount;
+  const providerLabel = provider === PHONE_SMS_PROVIDER_FIVE_SIM
+    ? '5sim'
+    : (provider === PHONE_SMS_PROVIDER_NEXSMS ? 'NexSMS' : 'HeroSMS');
+  if (displayHeroSmsPriceTiers) {
+    displayHeroSmsPriceTiers.textContent = [
+      `${providerLabel}: 已按最低价选中 ${selected.length}/${getPhoneSmsCountryScanLimit()} 个可用国家（成功 ${ranked.length}/${countries.length}，无库存 ${Math.max(0, noStockCount)}，失败 ${failedCount}）`,
+      ...ranked.slice(0, getPhoneSmsCountryScanLimit()).map(formatPhoneSmsCheapestCountryLine),
+    ].join('\n');
+  }
+  return { provider, countries, ranked, selected, failedCount, noStockCount };
 }
 
 function formatPriceTiersForPreview(entries = [], options = {}) {
@@ -13949,6 +14285,9 @@ function updateMailProviderUI() {
       ? `最终域名：${tempEmailEffectiveDomain}`
       : '';
   }
+  if (typeof rowTempEmailEduSubdomainToggle !== 'undefined' && rowTempEmailEduSubdomainToggle) {
+    rowTempEmailEduSubdomainToggle.style.display = showCloudflareTempEmailSubdomainMode ? '' : 'none';
+  }
   rowTempEmailDomain.style.display = showCloudflareTempEmailDomain ? '' : 'none';
   if (labelTempEmailDomain) {
     labelTempEmailDomain.textContent = showCloudflareTempEmailFixedSubdomainPrefix ? '基础域名' : 'Temp 域名';
@@ -14060,6 +14399,14 @@ function updateMailProviderUI() {
     autoHintText.textContent = tempEmailEffectiveDomain
       ? `已启用固定子域名：本次会向后端提交 ${tempEmailEffectiveDomain}；后端 ENABLE_CREATE_ADDRESS_SUBDOMAIN_MATCH、DNS、Email Routing/MX 都需要覆盖该子域。`
       : `已启用固定子域名：${fixedSubdomainValidation.message}；后端、DNS、Email Routing/MX 都需要覆盖该子域。`;
+  }
+  if (
+    autoHintText
+    && showCloudflareTempEmailSubdomainMode
+    && typeof inputTempEmailUseEduSubdomain !== 'undefined'
+    && inputTempEmailUseEduSubdomain?.checked
+  ) {
+    autoHintText.textContent = '已启用教育子域名：生成的邮箱地址将使用 edu 前缀子域名（如 user@edu.example.com）；是否生效取决于后端支持。';
   }
   if (autoHintText && useIcloudProvider && showIcloudForwardMailProvider) {
     const forwardProvider = normalizeIcloudForwardMailProvider(icloudForwardMailProviderValue);
@@ -17525,6 +17872,15 @@ inputTempEmailSubdomainPrefix?.addEventListener('blur', () => {
   saveSettings({ silent: true }).catch(() => { });
 });
 
+if (typeof inputTempEmailUseEduSubdomain !== 'undefined' && inputTempEmailUseEduSubdomain) {
+  inputTempEmailUseEduSubdomain.addEventListener('change', () => {
+    updateMailProviderUI();
+    clearRegistrationEmail({ silent: true }).catch(() => { });
+    markSettingsDirty(true);
+    saveSettings({ silent: true }).catch(() => { });
+  });
+}
+
 inputAutoSkipFailuresThreadIntervalMinutes.addEventListener('input', () => {
   markSettingsDirty(true);
   scheduleSettingsAutoSave();
@@ -18389,6 +18745,29 @@ btnPhoneSmsBalance?.addEventListener('click', async () => {
   }
 });
 
+btnPhoneSmsCheapestCountries?.addEventListener('click', async () => {
+  const previousDisabled = Boolean(btnPhoneSmsCheapestCountries.disabled);
+  btnPhoneSmsCheapestCountries.disabled = true;
+  try {
+    const result = await selectCheapestPhoneSmsCountries();
+    if (typeof showToast === 'function') {
+      showToast(`已选中 ${result.selected.length} 个低价国家。`, 'info', 1800);
+    }
+  } catch (error) {
+    if (displayHeroSmsPriceTiers) {
+      displayHeroSmsPriceTiers.textContent = `低价国家扫描失败：${error?.message || error}`;
+    }
+    if (rowHeroSmsPriceTiers) {
+      rowHeroSmsPriceTiers.style.display = '';
+    }
+    if (typeof showToast === 'function') {
+      showToast(`低价国家扫描失败：${error?.message || error}`, 'warn', 2400);
+    }
+  } finally {
+    btnPhoneSmsCheapestCountries.disabled = previousDisabled;
+  }
+});
+
 inputPhoneReplacementLimit?.addEventListener('input', () => {
   markSettingsDirty(true);
   scheduleSettingsAutoSave();
@@ -18998,12 +19377,20 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
           message.payload.cloudflareTempEmailSubdomainPrefix || ''
         );
       }
+      if (
+        message.payload.cloudflareTempEmailUseEduSubdomain !== undefined
+        && typeof inputTempEmailUseEduSubdomain !== 'undefined'
+        && inputTempEmailUseEduSubdomain
+      ) {
+        inputTempEmailUseEduSubdomain.checked = Boolean(message.payload.cloudflareTempEmailUseEduSubdomain);
+      }
       if (message.payload.cloudflareTempEmailDomain !== undefined || message.payload.cloudflareTempEmailDomains !== undefined) {
         renderCloudflareTempEmailDomainOptions(message.payload.cloudflareTempEmailDomain || latestState?.cloudflareTempEmailDomain || '');
       }
       if (
         message.payload.cloudflareTempEmailUseRandomSubdomain !== undefined
         || message.payload.cloudflareTempEmailUseFixedSubdomain !== undefined
+        || message.payload.cloudflareTempEmailUseEduSubdomain !== undefined
         || message.payload.cloudflareTempEmailSubdomainPrefix !== undefined
         || message.payload.cloudflareTempEmailLookupMode !== undefined
         || message.payload.cloudflareTempEmailDomain !== undefined

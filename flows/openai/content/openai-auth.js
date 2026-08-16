@@ -1,6 +1,5 @@
 // flows/openai/content/openai-auth.js — Content script for ChatGPT signup entry + OpenAI auth pages
-// Injected on: auth0.openai.com, auth.openai.com, accounts.openai.com
-// Dynamically injected on: chatgpt.com
+// Injected on: auth0.openai.com, auth.openai.com, accounts.openai.com, chatgpt.com
 
 console.log('[MultiPage:openai-auth] Content script loaded on', location.href);
 
@@ -3028,6 +3027,7 @@ function isLikelyLoggedInChatgptHomeUrl(rawUrl = location.href) {
 function isStep5CompletionChatgptUrl(rawUrl = location.href) {
   const url = String(rawUrl || '').trim();
   if (!url) {
+    console.log('[Step5检测] URL为空');
     return false;
   }
 
@@ -3035,13 +3035,23 @@ function isStep5CompletionChatgptUrl(rawUrl = location.href) {
     const parsed = new URL(url);
     const protocol = String(parsed.protocol || '').toLowerCase();
     const host = String(parsed.hostname || '').toLowerCase();
+    console.log('[Step5检测] 当前URL:', url);
+    console.log('[Step5检测] 协议:', protocol, '主机:', host);
+
     if (protocol !== 'https:' || !['chatgpt.com', 'www.chatgpt.com'].includes(host)) {
+      console.log('[Step5检测] 不是 chatgpt.com 域名，返回 false');
       return false;
     }
 
     const path = String(parsed.pathname || '');
-    return !/^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(path);
-  } catch {
+    const isAuthPath = /^\/(?:auth\/|create-account\/|email-verification|log-in|add-phone)(?:[/?#]|$)/i.test(path);
+    console.log('[Step5检测] 路径:', path, '是否为认证路径:', isAuthPath);
+
+    const result = !isAuthPath;
+    console.log('[Step5检测] 最终结果:', result ? '✓ 已到达成功页' : '✗ 仍在认证流程');
+    return result;
+  } catch (err) {
+    console.log('[Step5检测] URL解析失败:', err.message);
     return false;
   }
 }
@@ -3054,17 +3064,19 @@ function getStep4PostVerificationState(options = {}) {
     return null;
   }
 
-  if (isStep5Ready() || isSignupProfilePageUrl()) {
-    return {
-      state: 'step5',
-      url: location.href,
-    };
-  }
-
+  // Check logged-in home FIRST before checking step 5 ready
+  // OpenAI may skip profile step entirely in some flows
   if (isLikelyLoggedInChatgptHomeUrl()) {
     return {
       state: 'logged_in_home',
       skipProfileStep: true,
+      url: location.href,
+    };
+  }
+
+  if (isStep5Ready() || isSignupProfilePageUrl()) {
+    return {
+      state: 'step5',
       url: location.href,
     };
   }
@@ -7691,6 +7703,11 @@ async function step5_fillNameBirthday(payload) {
         const gate = rootScope?.CodexOperationDelay?.performOperationWithDelay;
         return typeof gate === 'function' ? gate(metadata, operation) : operation();
       };
+  const getPostSubmitSuccessState = () => (
+    typeof getStep5PostSubmitSuccessState === 'function'
+      ? getStep5PostSubmitSuccessState()
+      : null
+  );
 
   const resolvedAge = age ?? (year ? new Date().getFullYear() - Number(year) : null);
   const hasBirthdayData = [year, month, day].every(value => value != null && !Number.isNaN(Number(value)));
@@ -7720,7 +7737,21 @@ async function step5_fillNameBirthday(payload) {
   await performOperationWithDelay({ stepKey: 'fill-profile', kind: 'fill', label: 'fill-name' }, async () => {
     fillInput(nameInput, fullName);
   });
+
+  // Immediate check: OpenAI may navigate away instantly after name input
+  if (getPostSubmitSuccessState()) {
+    log('步骤 5：填写姓名后页面已立即跳转至成功页，注册完成。', 'ok');
+    return;
+  }
+
   log(`步骤 5：姓名已填写：${fullName}`);
+
+  // Check if page already navigated to success (OpenAI may have changed flow)
+  await sleep(800);
+  if (getPostSubmitSuccessState()) {
+    log('步骤 5：填写姓名后页面已自动跳转至成功页，无需填写生日。', 'ok');
+    return;
+  }
 
   let birthdayMode = false;
   let ageInput = null;
@@ -7739,6 +7770,12 @@ async function step5_fillNameBirthday(payload) {
     .find(Boolean) || null;
 
   for (let i = 0; i < 100; i++) {
+    // Check if page already navigated to success during the wait
+    if (getPostSubmitSuccessState()) {
+      log('步骤 5：等待生日输入框期间页面已跳转至成功页，无需填写生日。', 'ok');
+      return;
+    }
+
     yearSpinner = document.querySelector('[role="spinbutton"][data-type="year"]');
     monthSpinner = document.querySelector('[role="spinbutton"][data-type="month"]');
     daySpinner = document.querySelector('[role="spinbutton"][data-type="day"]');
@@ -7772,6 +7809,12 @@ async function step5_fillNameBirthday(payload) {
       break;
     }
     await sleep(100);
+  }
+
+  // Final check: if page navigated to success during the wait, we're done
+  if (getPostSubmitSuccessState()) {
+    log('步骤 5：等待生日输入框超时，但页面已跳转至成功页，注册完成。', 'ok');
+    return;
   }
 
   if (birthdayMode) {
@@ -7877,6 +7920,11 @@ async function step5_fillNameBirthday(payload) {
     });
     log(`步骤 5：年龄已填写：${resolvedAge}`);
   } else {
+    // No birthday or age field found - but check if page already navigated to success
+    if (getPostSubmitSuccessState()) {
+      log('步骤 5：未找到生日/年龄输入框，但页面已跳转至成功页，注册完成。', 'ok');
+      return;
+    }
     throw new Error('未找到生日或年龄输入项。URL: ' + location.href);
   }
   // 韩国IP判断勾选框""I agree"

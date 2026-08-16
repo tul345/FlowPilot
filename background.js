@@ -1396,6 +1396,7 @@ const PERSISTED_SETTING_DEFAULTS = {
   cloudflareTempEmailUseRandomSubdomain: false,
   cloudflareTempEmailUseFixedSubdomain: false,
   cloudflareTempEmailSubdomainPrefix: '',
+  cloudflareTempEmailUseEduSubdomain: false,
   cloudflareTempEmailDomain: '',
   cloudflareTempEmailDomains: [],
   cloudMailBaseUrl: '',
@@ -3010,6 +3011,9 @@ function getCloudflareTempEmailConfig(state = {}) {
     domain,
     domains: normalizeCloudflareTempEmailDomains(state.cloudflareTempEmailDomains),
   };
+  if (state.cloudflareTempEmailUseEduSubdomain) {
+    config.useEduSubdomain = true;
+  }
   return {
     ...config,
     effectiveDomain: buildCloudflareTempEmailEffectiveDomain(config),
@@ -3465,6 +3469,7 @@ function normalizePersistentSettingValue(key, value) {
     case 'accountRunHistoryTextEnabled':
     case 'cloudflareTempEmailUseRandomSubdomain':
     case 'cloudflareTempEmailUseFixedSubdomain':
+    case 'cloudflareTempEmailUseEduSubdomain':
       return Boolean(value);
     case 'icloudHostPreference':
       return normalizeIcloudHost(value) || 'auto';
@@ -14093,10 +14098,14 @@ const step4Executor = self.MultiPageBackgroundStep4?.createStep4Executor({
 });
 const step5Executor = self.MultiPageBackgroundStep5?.createStep5Executor({
   addLog,
+  chrome,
+  completeNodeFromBackground,
   generateRandomBirthday,
   generateRandomName,
+  getTabId,
   sendToContentScript,
   setState,
+  sleepWithStop,
 });
 const step6Executor = self.MultiPageBackgroundStep6?.createStep6Executor({
   addLog,

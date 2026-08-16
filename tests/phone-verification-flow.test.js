@@ -1967,7 +1967,7 @@ test('phone verification helper retries acquisition rounds when at least one cou
   const requests = [];
   const logs = [];
   const sleeps = [];
-  let thailandGetNumberCalls = 0;
+  let thailandFixedGetNumberCalls = 0;
 
   const helpers = api.createPhoneVerificationHelpers({
     addLog: async (message, level) => {
@@ -1996,8 +1996,11 @@ test('phone verification helper retries acquisition rounds when at least one cou
       if (action === 'getNumber' || action === 'getNumberV2') {
         if (country === '52') {
           if (action === 'getNumber') {
-            thailandGetNumberCalls += 1;
-            if (thailandGetNumberCalls >= 2) {
+            const isFixedPriceRequest = parsedUrl.searchParams.get('fixedPrice') === 'true';
+            if (isFixedPriceRequest) {
+              thailandFixedGetNumberCalls += 1;
+            }
+            if (isFixedPriceRequest && thailandFixedGetNumberCalls >= 2) {
               return {
                 ok: true,
                 text: async () => 'ACCESS_NUMBER:991122:66951112233',
@@ -2254,6 +2257,58 @@ test('phone verification helper refreshes maxPrice when HeroSMS returns WRONG_MA
   assert.equal(requests[2].searchParams.get('action'), 'getNumber');
   assert.equal(requests[2].searchParams.get('maxPrice'), '0.09');
   assert.equal(requests[2].searchParams.get('fixedPrice'), 'true');
+});
+
+test('phone verification helper falls back to flexible HeroSMS user max when fixed catalog tier has no numbers', async () => {
+  const requests = [];
+  const helpers = api.createPhoneVerificationHelpers({
+    addLog: async () => {},
+    ensureStep8SignupPageReady: async () => {},
+    fetchImpl: async (url) => {
+      const parsedUrl = new URL(url);
+      requests.push(parsedUrl);
+      const action = parsedUrl.searchParams.get('action');
+      const maxPrice = parsedUrl.searchParams.get('maxPrice');
+      const fixedPrice = parsedUrl.searchParams.get('fixedPrice');
+      if (action === 'getPrices') {
+        return {
+          ok: true,
+          text: async () => buildHeroSmsPricesPayload({ cost: 0.03, count: 20 }),
+        };
+      }
+      if ((action === 'getNumber' || action === 'getNumberV2') && maxPrice === '0.03' && fixedPrice === 'true') {
+        return { ok: true, text: async () => 'NO_NUMBERS' };
+      }
+      if (action === 'getNumber' && maxPrice === '0.05' && fixedPrice === null) {
+        return { ok: true, text: async () => 'ACCESS_NUMBER:555001:447911123456' };
+      }
+      throw new Error(`Unexpected HeroSMS request: ${action}:${maxPrice}:${fixedPrice}`);
+    },
+    getState: async () => ({ heroSmsApiKey: 'demo-key' }),
+    sendToContentScriptResilient: async () => ({}),
+    setState: async () => {},
+    sleepWithStop: async () => {},
+    throwIfStopped: () => {},
+  });
+
+  const activation = await helpers.requestPhoneActivation({
+    heroSmsApiKey: 'demo-key',
+    heroSmsMaxPrice: '0.05',
+  });
+
+  assert.equal(activation.activationId, '555001');
+  assert.equal(activation.phoneNumber, '447911123456');
+  assert.equal(activation.countryId, 52);
+  assert.equal(requests[0].searchParams.get('action'), 'getPrices');
+  assert.equal(requests[1].searchParams.get('action'), 'getNumber');
+  assert.equal(requests[1].searchParams.get('maxPrice'), '0.03');
+  assert.equal(requests[1].searchParams.get('fixedPrice'), 'true');
+  assert.equal(requests[2].searchParams.get('action'), 'getNumberV2');
+  assert.equal(requests[2].searchParams.get('maxPrice'), '0.03');
+  assert.equal(requests[2].searchParams.get('fixedPrice'), 'true');
+  assert.equal(requests[3].searchParams.get('action'), 'getNumber');
+  assert.equal(requests[3].searchParams.get('maxPrice'), '0.05');
+  assert.equal(requests[3].searchParams.get('fixedPrice'), null);
 });
 
 test('phone verification helper climbs price tiers when NO_NUMBERS is returned at lower prices', async () => {
@@ -8881,15 +8936,15 @@ test('phone verification helper logs no-supply diagnostics with consecutive stre
   assert.equal(diagnosticsLogs.some((entry) => entry.message.includes('无号连续失败 1 次')), true);
   assert.equal(diagnosticsLogs.some((entry) => entry.message.includes('无号连续失败 2 次')), true);
   assert.equal(
-    diagnosticsLogs.some((entry) => entry.message.includes('价格区间=0.04~0.06')),
+    diagnosticsLogs.some((entry) => entry.message.includes('筛选区间=0.04~0.06')),
     true
   );
   assert.equal(
-    diagnosticsLogs.some((entry) => entry.message.includes('最低价=0.04')),
+    diagnosticsLogs.some((entry) => entry.message.includes('设置下限=0.04')),
     true
   );
   assert.equal(
-    diagnosticsLogs.some((entry) => entry.message.includes('最高价=0.06')),
+    diagnosticsLogs.some((entry) => entry.message.includes('设置上限=0.06')),
     true
   );
   assert.equal(

@@ -1613,7 +1613,7 @@
       const providerOrderText = context.order.join(' > ');
       const suggestion = formatNoSupplySuggestion(context);
       await addLog(
-        `步骤 9 诊断：无号连续失败 ${nextStreak} 次；价格区间=${priceRangeText}；最低价=${minPriceText}；最高价=${maxPriceText}；平台顺序=${providerOrderText}；国家数 HeroSMS=${context.heroCountryCount}, 5sim=${context.fiveSimCountryCount}, NexSMS=${context.nexSmsCountryCount}。建议：${suggestion}。`,
+        `步骤 9 诊断：无号连续失败 ${nextStreak} 次；筛选区间=${priceRangeText}；设置下限=${minPriceText}；设置上限=${maxPriceText}；平台顺序=${providerOrderText}；国家数 HeroSMS=${context.heroCountryCount}, 5sim=${context.fiveSimCountryCount}, NexSMS=${context.nexSmsCountryCount}。建议：${suggestion}。`,
         nextStreak >= 2 ? 'warn' : 'info'
       );
       return true;

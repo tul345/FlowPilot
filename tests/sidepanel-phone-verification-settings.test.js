@@ -776,7 +776,7 @@ test('hero sms country helpers keep empty summary state and expose removable ord
   );
 
   const api = new Function(`
-const HERO_SMS_COUNTRY_SELECTION_MAX = 3;
+const HERO_SMS_COUNTRY_SELECTION_MAX = 10;
 const btnHeroSmsCountryMenu = { textContent: '' };
 function isFiveSimProviderSelected() { return false; }
 function normalizeFiveSimCountryFallbackList(value = []) { return Array.isArray(value) ? value : []; }
@@ -786,7 +786,7 @@ return { btnHeroSmsCountryMenu, updateHeroSmsCountryMenuSummary };
 `)();
 
   api.updateHeroSmsCountryMenuSummary([]);
-  assert.equal(api.btnHeroSmsCountryMenu.textContent, '\u672a\u9009\u62e9 (0/3)');
+  assert.equal(api.btnHeroSmsCountryMenu.textContent, '\u672a\u9009\u62e9 (0/10)');
 });
 
 test('live phone country sources are not hard-filtered down to the reduced country whitelist', () => {
@@ -802,6 +802,135 @@ test('live phone country sources are not hard-filtered down to the reduced count
     sidepanelSource,
     /\.filter\(\(entry\) => FIVE_SIM_SUPPORTED_COUNTRY_ID_SET\.has\(entry\.code \|\| entry\.id\)\)/
   );
+});
+
+test('phone sms cheapest country scan selects the lowest in-stock HeroSMS countries', async () => {
+  assert.match(sidepanelHtml, /id="btn-phone-sms-cheapest-countries"/);
+  assert.match(sidepanelHtml, /Thailand \(1\/10\)/);
+  assert.match(sidepanelHtml, /多选最多 10 个，按点击顺序生效。/);
+  assert.doesNotMatch(sidepanelHtml, /多选最多 3 个/);
+  assert.match(sidepanelSource, /btnPhoneSmsCheapestCountries\?\.\s*addEventListener\('click'/);
+
+  const api = new Function(`
+const PHONE_SMS_PROVIDER_HERO_SMS = 'hero-sms';
+const PHONE_SMS_PROVIDER_HERO = PHONE_SMS_PROVIDER_HERO_SMS;
+const PHONE_SMS_PROVIDER_FIVE_SIM = '5sim';
+const PHONE_SMS_PROVIDER_NEXSMS = 'nexsms';
+const PHONE_SMS_PROVIDER_MADAO = 'madao';
+const PHONE_SMS_PROVIDER_CUSTOM_URL = 'custom-url';
+const DEFAULT_PHONE_SMS_PROVIDER = PHONE_SMS_PROVIDER_HERO_SMS;
+const HERO_SMS_COUNTRY_SELECTION_MAX = 2;
+const inputHeroSmsApiKey = { value: 'hero-key' };
+const inputNexSmsApiKey = { value: '' };
+const inputHeroSmsMinPrice = { value: '' };
+const inputHeroSmsMaxPrice = { value: '' };
+const inputMaDaoMinPrice = { value: '' };
+const inputMaDaoMaxPrice = { value: '' };
+const inputFiveSimProduct = { value: 'openai' };
+const inputNexSmsServiceCode = { value: 'ot' };
+const latestState = { phoneSmsProvider: 'hero-sms' };
+const rowHeroSmsPriceTiers = { style: { display: 'none' } };
+const displayHeroSmsPriceTiers = { textContent: '' };
+const selectHeroSmsCountry = {
+  options: [
+    { value: '10', textContent: 'Aland' },
+    { value: '20', textContent: 'Bland' },
+    { value: '30', textContent: 'Cland' },
+    { value: '40', textContent: 'Dland' },
+  ],
+};
+const selectFiveSimCountry = { options: [] };
+const selectNexSmsCountry = { options: [] };
+let appliedCountries = null;
+let appliedOptions = null;
+let dirty = false;
+let saved = false;
+function getSelectedPhoneSmsProvider() { return 'hero-sms'; }
+function loadHeroSmsCountries() { return Promise.resolve(); }
+function applyHeroSmsFallbackSelection(countries, options) {
+  appliedCountries = countries;
+  appliedOptions = options;
+}
+function applyFiveSimCountrySelection() {}
+function applyNexSmsCountrySelection() {}
+function updateHeroSmsPlatformDisplay() {}
+function markSettingsDirty(value) { dirty = Boolean(value); }
+function saveSettings() { saved = true; return Promise.resolve(); }
+${extractFunction('normalizePhoneSmsProvider')}
+${extractFunction('normalizePhoneSmsProviderValue')}
+${extractFunction('normalizeFiveSimCountryCode')}
+${extractFunction('normalizeFiveSimCountryLabel')}
+${extractFunction('normalizeFiveSimProductValue')}
+${extractFunction('normalizeNexSmsCountryIdValue')}
+${extractFunction('normalizeNexSmsCountryLabel')}
+${extractFunction('normalizeNexSmsServiceCodeValue')}
+${extractFunction('normalizeHeroSmsMaxPriceValue')}
+${extractFunction('normalizeHeroSmsCountryId')}
+${extractFunction('normalizeHeroSmsCountryLabel')}
+${extractFunction('normalizeHeroSmsPriceForPreview')}
+${extractFunction('formatHeroSmsPriceForPreview')}
+${extractFunction('collectHeroSmsPriceEntriesForPreview')}
+${extractFunction('describeHeroSmsPreviewPayload')}
+${extractFunction('summarizeHeroSmsPreviewError')}
+${extractFunction('resolvePhoneSmsPricePreviewRange')}
+${extractFunction('isPhoneSmsPriceWithinPreviewRange')}
+${extractFunction('filterPhoneSmsPriceEntriesForPreviewRange')}
+${extractFunction('filterPhoneSmsPriceValuesForPreviewRange')}
+${extractFunction('formatPhoneSmsPriceRangePreviewText')}
+${extractFunction('buildPhoneSmsPriceRangePreviewMessage')}
+${extractFunction('getPhoneSmsCountryScanLimit')}
+${extractFunction('summarizePhoneSmsCountryPriceEntries')}
+${extractFunction('fetchPhoneSmsJsonLikePayload')}
+${extractFunction('readPhoneSmsCountryOptionsForCheapestScan')}
+${extractFunction('formatPriceTiersForPreview')}
+${extractFunction('formatPhoneSmsCheapestCountryLine')}
+${extractFunction('scanHeroSmsCheapestCountry')}
+${extractFunction('scanFiveSimCheapestCountry')}
+${extractFunction('scanNexSmsCheapestCountry')}
+${extractFunction('mapPhoneSmsCountriesWithConcurrency')}
+${extractFunction('rankPhoneSmsCheapestCountryResults')}
+${extractFunction('applyPhoneSmsCheapestCountrySelection')}
+${extractFunction('selectCheapestPhoneSmsCountries')}
+async function fetch(url) {
+  const parsed = new URL(url);
+  const country = parsed.searchParams.get('country');
+  if (country === '40') {
+    return { ok: false, status: 500, text: async () => 'SERVER_ERROR' };
+  }
+  const payloadByCountry = {
+    10: { dr: { cost: 0.2, physicalCount: 5 } },
+    20: { dr: { cost: 0.05, physicalCount: 2 } },
+    30: { dr: { cost: 0.04, physicalCount: 0 } },
+  };
+  return {
+    ok: true,
+    status: 200,
+    text: async () => JSON.stringify(payloadByCountry[country] || {}),
+  };
+}
+return {
+  selectCheapestPhoneSmsCountries,
+  get appliedCountries() { return appliedCountries; },
+  get appliedOptions() { return appliedOptions; },
+  get dirty() { return dirty; },
+  get saved() { return saved; },
+  displayHeroSmsPriceTiers,
+  rowHeroSmsPriceTiers,
+};
+`)();
+
+  const result = await api.selectCheapestPhoneSmsCountries();
+
+  assert.deepStrictEqual(api.appliedCountries.map((country) => country.id), [20, 10]);
+  assert.deepStrictEqual(result.selected.map((country) => country.id), [20, 10]);
+  assert.deepStrictEqual(api.appliedOptions, { includePrimary: true });
+  assert.equal(api.dirty, true);
+  assert.equal(api.saved, true);
+  assert.equal(api.rowHeroSmsPriceTiers.style.display, '');
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /选中 2\/2 个可用国家/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /Bland: 0\.05/);
+  assert.match(api.displayHeroSmsPriceTiers.textContent, /Aland: 0\.2/);
+  assert.equal(result.failedCount, 1);
 });
 
 test('removeHeroSmsCountryFromOrder clears the selected country and triggers a silent save', async () => {

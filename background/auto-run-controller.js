@@ -75,13 +75,33 @@
     });
     const DONE_NODE_STATUSES = new Set(['completed', 'manual_completed', 'skipped']);
 
-    function buildFreshAttemptIdentityResetPatch() {
+    function resolveManualSignupPhoneForFreshAttempt(state = {}) {
+      const signupMethod = String(state?.signupMethod || state?.resolvedSignupMethod || '').trim().toLowerCase();
+      const identifierType = String(state?.accountIdentifierType || '').trim().toLowerCase();
+      const phoneNumber = String(
+        state?.signupPhoneNumber
+        || (identifierType === 'phone' ? state?.accountIdentifier : '')
+        || ''
+      ).trim();
+      if (
+        signupMethod === 'phone'
+        && phoneNumber
+        && !state?.signupPhoneActivation
+        && !state?.signupPhoneCompletedActivation
+      ) {
+        return phoneNumber;
+      }
+      return '';
+    }
+
+    function buildFreshAttemptIdentityResetPatch(state = {}) {
+      const manualSignupPhone = resolveManualSignupPhoneForFreshAttempt(state);
       return {
         currentPhoneActivation: null,
         phoneNumber: '',
-        accountIdentifierType: null,
-        accountIdentifier: '',
-        signupPhoneNumber: '',
+        accountIdentifierType: manualSignupPhone ? 'phone' : null,
+        accountIdentifier: manualSignupPhone,
+        signupPhoneNumber: manualSignupPhone,
         signupPhoneActivation: null,
         signupPhoneCompletedActivation: null,
         signupPhoneVerificationRequestedAt: null,
@@ -728,7 +748,7 @@
                 attemptRun,
                 sessionId,
               }),
-              ...buildFreshAttemptIdentityResetPatch(),
+              ...buildFreshAttemptIdentityResetPatch(prevState),
               currentNodeId: '',
               nodeStatuses: buildFreshAttemptNodeStatuses(prevState),
               autoRunRoundSummaries: serializeAutoRunRoundSummaries(totalRuns, roundSummaries),

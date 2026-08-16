@@ -45,7 +45,9 @@
       "matches": [
         "https://auth0.openai.com/*",
         "https://auth.openai.com/*",
-        "https://accounts.openai.com/*"
+        "https://accounts.openai.com/*",
+        "https://chatgpt.com/*",
+        "https://www.chatgpt.com/*"
       ],
       "js": [
         "content/activation-utils.js",
